@@ -657,7 +657,19 @@ def render_guide_tab():
     """)
 
 
+def hide_streamlit_style():
+    """Streamlit 기본 스타일 숨기기 (메뉴, 푸터 등)"""
+    hide_st_style = """
+        <style>
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+        </style>
+        """
+    st.markdown(hide_st_style, unsafe_allow_html=True)
+
 def main():
+    hide_streamlit_style()
     st.title("Control Chart Viewer v1.0")
     
     # Sidebar (Analysis Filters)
