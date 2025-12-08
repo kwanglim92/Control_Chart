@@ -658,36 +658,25 @@ def render_guide_tab():
 
 
 def hide_streamlit_style():
-    """Streamlit 기본 스타일 숨기기 (메뉴, 푸터 등)"""
+    """Streamlit 기본 스타일 숨기기 (Reddit 솔루션 + 기존 방식)"""
     hide_st_style = """
         <style>
-        /* 1. Fork 버튼 숨기기 (GitHub 링크를 가진 a 태그 타겟팅) */
-        header a[href*="github"] {
-            visibility: hidden !important;
+        /* Reddit Solution: 특정 클래스명 타겟팅 */
+        .css-1jc7ptx, .e1ewe7hr3, .viewerBadge_container__1QSob,
+        .styles_viewerBadge__1yB5_, .viewerBadge_link__1S137,
+        .viewerBadge_text__1JaDK {
             display: none !important;
         }
         
-        /* 2. 헤더의 액션 버튼 그룹 숨기기 */
+        /* 기존 방식: 헤더 액션 버튼 및 푸터 숨기기 */
         [data-testid="stHeaderActionElements"] {
-            visibility: hidden !important;
             display: none !important;
         }
         
-        /* 3. 푸터 숨기기 (다양한 셀렉터 적용) */
         footer {
             visibility: hidden !important;
             display: none !important;
         }
-        [data-testid="stFooter"] {
-            visibility: hidden !important;
-            display: none !important;
-        }
-        .viewerFooter {
-            visibility: hidden !important;
-            display: none !important;
-        }
-        
-        /* 4. MainMenu(설정)와 사이드바 버튼은 건드리지 않음 (기본값 유지) */
         </style>
         """
     st.markdown(hide_st_style, unsafe_allow_html=True)
