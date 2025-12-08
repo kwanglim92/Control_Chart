@@ -661,30 +661,33 @@ def hide_streamlit_style():
     """Streamlit 기본 스타일 숨기기 (메뉴, 푸터 등)"""
     hide_st_style = """
         <style>
-        /* 1. 헤더 전체를 일단 숨김 */
-        header {visibility: hidden !important;}
-        
-        /* 2. 사이드바 토글 버튼만 다시 보이게 함 */
-        [data-testid="stSidebarCollapsedControl"] {
-            visibility: visible !important;
-            display: block !important;
+        /* 1. Fork 버튼 숨기기 (GitHub 링크를 가진 a 태그 타겟팅) */
+        header a[href*="github"] {
+            visibility: hidden !important;
+            display: none !important;
         }
         
-        /* 3. 우측 상단 메뉴(점 3개)만 다시 보이게 함 (테마 설정용) */
-        [data-testid="stToolbar"] {
-            visibility: visible !important;
-            display: block !important;
-            right: 2rem; /* 위치 조정 */
+        /* 2. 헤더의 액션 버튼 그룹 숨기기 */
+        [data-testid="stHeaderActionElements"] {
+            visibility: hidden !important;
+            display: none !important;
         }
         
-        /* 4. 헤더 내의 다른 장식 요소(Fork 버튼 등)는 확실히 제거 */
-        .stDeployButton {display: none !important;}
-        [data-testid="stHeaderActionElements"] {display: none !important;}
+        /* 3. 푸터 숨기기 (다양한 셀렉터 적용) */
+        footer {
+            visibility: hidden !important;
+            display: none !important;
+        }
+        [data-testid="stFooter"] {
+            visibility: hidden !important;
+            display: none !important;
+        }
+        .viewerFooter {
+            visibility: hidden !important;
+            display: none !important;
+        }
         
-        /* 5. 푸터 숨기기 (여러 클래스 타겟팅) */
-        footer {visibility: hidden !important; display: none !important;}
-        .st-emotion-cache-12fmw14 {display: none !important;} 
-        .st-emotion-cache-1y4p8pa {display: none !important;}
+        /* 4. MainMenu(설정)와 사이드바 버튼은 건드리지 않음 (기본값 유지) */
         </style>
         """
     st.markdown(hide_st_style, unsafe_allow_html=True)
