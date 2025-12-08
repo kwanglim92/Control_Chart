@@ -661,9 +661,14 @@ def hide_streamlit_style():
     """Streamlit 기본 스타일 숨기기 (메뉴, 푸터 등)"""
     hide_st_style = """
         <style>
-        #MainMenu {visibility: hidden;}
+        /* MainMenu는 테마 설정을 위해 보이게 함 */
+        /* #MainMenu {visibility: hidden;} */
+        
+        /* 상단 헤더의 Fork/Deploy 버튼 숨기기 */
+        [data-testid="stHeaderActionElements"] {visibility: hidden;}
+        
+        /* 푸터 숨기기 */
         footer {visibility: hidden;}
-        header {visibility: hidden;}
         </style>
         """
     st.markdown(hide_st_style, unsafe_allow_html=True)
