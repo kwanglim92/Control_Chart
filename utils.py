@@ -8,6 +8,19 @@ from typing import Tuple, List, Dict
 from unicodedata import normalize as unicode_normalize
 
 
+# Model Classifications
+RESEARCH_MODELS = [
+    'FX200', 'FX40', 'NX-Hivac', 'NX7', 'NX10', 'NX12', 'NX15', 
+    'NX20', 'NX20 300mm', 'NX20 Lite'
+]
+
+INDUSTRIAL_MODELS = [
+    'NX-HDM', 'NX-Hybrid WLI', 'NX-Hybrid WLI(Interferom Ver.)', 'NX-Mask', 
+    'NX-PSS', 'NX-PTR', 'NX-TSH', 'NX-TSH1518', 'NX-TSH400TF', 
+    'NX-Wafer', 'NX-Wafer Basic', 'NX-Wafer Plus'
+]
+
+
 def normalize_key(text: str) -> str:
     """
     C# NormalizeKey 함수 포팅

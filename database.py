@@ -17,12 +17,12 @@ def init_db():
     
     # 1. Equipments Table (Master Data)
     # 장비의 고유 스펙을 관리합니다.
-    # 장비명(equipment_name)과 종료일(date)을 복합적으로 유니크하게 볼 수도 있지만,
-    # 여기서는 편의상 ID를 PK로 하고, 장비명을 식별자로 사용합니다.
+    # SID Number를 Primary Key(또는 Unique Key)로 사용합니다.
     c.execute('''
         CREATE TABLE IF NOT EXISTS equipments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            equipment_name TEXT UNIQUE,  -- 장비명 (고객사명 등)
+            sid TEXT UNIQUE,             -- SID Number (고유 식별자)
+            equipment_name TEXT,         -- 장비명 (고객사명 등)
             date TEXT,                   -- 종료일 (생산 완료일)
             ri TEXT,                     -- R/I 구분
             model TEXT,                  -- Model
@@ -47,6 +47,19 @@ def init_db():
             FOREIGN KEY (equipment_id) REFERENCES equipments (id)
         )
     ''')
+
+    # 3. Specs Table (Standards)
+    # 모델별/항목별 관리 기준 (LSL, USL, Target)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS specs (
+            model TEXT,
+            check_item TEXT,
+            lsl REAL,
+            usl REAL,
+            target REAL,
+            PRIMARY KEY (model, check_item)
+        )
+    ''')
     
     conn.commit()
     conn.close()
@@ -57,6 +70,7 @@ def recreate_tables():
     c = conn.cursor()
     c.execute("DROP TABLE IF EXISTS measurements")
     c.execute("DROP TABLE IF EXISTS equipments")
+    c.execute("DROP TABLE IF EXISTS specs")
     conn.commit()
     conn.close()
     init_db()
@@ -65,13 +79,176 @@ def get_connection():
     """Get database connection."""
     return sqlite3.connect(DB_FILE)
 
-def import_data_from_df(df: pd.DataFrame) -> Dict[str, int]:
+def sync_specs_from_dataframe(df: pd.DataFrame):
+    """
+    Sync specs from DataFrame to SQLite.
+    Expected columns: Model, Check Item, LSL, USL, Target
+    """
+    if df.empty:
+        return
+        
+    conn = get_connection()
+    c = conn.cursor()
+    
+    # Clear existing specs (Full Replace strategy for specs too)
+    c.execute("DELETE FROM specs")
+    
+    # Column mapping
+    col_map = {
+        'Model': 'model',
+        'Check Item': 'check_item',
+        'LSL': 'lsl',
+        'USL': 'usl',
+        'Target': 'target'
+    }
+    
+    df_db = df.rename(columns=col_map)
+    
+    for _, row in df_db.iterrows():
+        if pd.isna(row.get('model')) or pd.isna(row.get('check_item')):
+            continue
+            
+        c.execute('''
+            INSERT OR REPLACE INTO specs (model, check_item, lsl, usl, target)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (
+            row.get('model'), 
+            row.get('check_item'), 
+            row.get('lsl') if pd.notna(row.get('lsl')) else None,
+            row.get('usl') if pd.notna(row.get('usl')) else None,
+            row.get('target') if pd.notna(row.get('target')) else None
+        ))
+        
+    conn.commit()
+    conn.close()
+
+def get_spec_for_item(model: str, check_item: str) -> Dict[str, Optional[float]]:
+    """Get spec limits for a specific model and check item."""
+    conn = get_connection()
+    c = conn.cursor()
+    
+    c.execute("SELECT lsl, usl, target FROM specs WHERE model = ? AND check_item = ?", (model, check_item))
+    res = c.fetchone()
+    conn.close()
+    
+    if res:
+        return {'lsl': res[0], 'usl': res[1], 'target': res[2]}
+    return {'lsl': None, 'usl': None, 'target': None}
+
+
+def sync_relational_data(df_equip: pd.DataFrame, df_meas: pd.DataFrame, df_specs: pd.DataFrame = None) -> Dict[str, int]:
+    """
+    Sync data from 3 relational sheets (Equipments, Measurements, Specs).
+    """
+    recreate_tables()
+    conn = get_connection()
+    c = conn.cursor()
+    
+    added_equipments = 0
+    added_measurements = 0
+    
+    # 1. Sync Specs
+    if df_specs is not None and not df_specs.empty:
+        # Inline Specs Sync
+        col_map_specs = {'Model': 'model', 'Check Item': 'check_item', 'LSL': 'lsl', 'USL': 'usl', 'Target': 'target'}
+        df_s = df_specs.rename(columns=col_map_specs)
+        for _, row in df_s.iterrows():
+            if pd.isna(row.get('model')) or pd.isna(row.get('check_item')): continue
+            c.execute('''
+                INSERT OR REPLACE INTO specs (model, check_item, lsl, usl, target)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                row.get('model'), row.get('check_item'), 
+                row.get('lsl') if pd.notna(row.get('lsl')) else None,
+                row.get('usl') if pd.notna(row.get('usl')) else None,
+                row.get('target') if pd.notna(row.get('target')) else None
+            ))
+
+    # 2. Sync Equipments
+    # Expected columns: SID, 장비명, 종료일, R/I, Model, ...
+    col_map_equip = {
+        'SID': 'sid', '장비명': 'equipment_name', '종료일': 'date', 'R/I': 'ri', 'Model': 'model',
+        'XY Scanner': 'xy_scanner', 'Head Type': 'head_type', 'MOD/VIT': 'mod_vit',
+        'Sliding Stage': 'sliding_stage', 'Sample Chuck': 'sample_chuck', 'AE': 'ae'
+    }
+    df_e = df_equip.rename(columns=col_map_equip)
+    
+    # Ensure date is string
+    if 'date' in df_e.columns:
+        df_e['date'] = df_e['date'].astype(str)
+        
+    # Map SID -> ID for measurements linking
+    sid_to_id = {}
+    
+    for _, row in df_e.iterrows():
+        # If SID is missing, use Equipment Name as fallback? Or skip?
+        sid = row.get('sid')
+        if pd.isna(sid) or str(sid).strip() == '':
+            # Fallback: Use equipment_name if available
+            if pd.notna(row.get('equipment_name')):
+                sid = row.get('equipment_name')
+            else:
+                continue # Skip if no identifier
+        
+        # Insert Equipment
+        cols = ['sid', 'equipment_name', 'date', 'ri', 'model', 'xy_scanner', 
+                'head_type', 'mod_vit', 'sliding_stage', 'sample_chuck', 'ae']
+        vals = [row.get(col) for col in cols]
+        
+        placeholders = ', '.join(['?'] * len(cols))
+        cols_str = ', '.join(cols)
+        
+        try:
+            c.execute(f"INSERT INTO equipments ({cols_str}) VALUES ({placeholders})", vals)
+            equip_id = c.lastrowid
+            sid_to_id[str(sid)] = equip_id
+            added_equipments += 1
+        except sqlite3.IntegrityError:
+            # Duplicate SID? Skip or Update?
+            print(f"Duplicate SID skipped: {sid}")
+            pass
+
+    # 3. Sync Measurements
+    # Expected columns: SID, Check Items, Value. (Optional: 장비명 for fallback)
+    col_map_meas = {'SID': 'sid', '장비명': 'equipment_name', 'Check Items': 'check_item', 'Value': 'value'}
+    df_m = df_meas.rename(columns=col_map_meas)
+    
+    for _, row in df_m.iterrows():
+        sid = row.get('sid')
+        
+        # Fallback: If SID is empty, try using equipment_name
+        if pd.isna(sid) or str(sid).strip() == '':
+            if pd.notna(row.get('equipment_name')):
+                sid = row.get('equipment_name')
+            else:
+                continue # Skip if no identifier
+        
+        equip_id = sid_to_id.get(str(sid))
+        
+        if equip_id:
+            if pd.notna(row.get('check_item')) and pd.notna(row.get('value')):
+                c.execute('''
+                    INSERT INTO measurements (equipment_id, check_item, value)
+                    VALUES (?, ?, ?)
+                ''', (equip_id, row['check_item'], row['value']))
+                added_measurements += 1
+                
+    conn.commit()
+    conn.close()
+    
+    return {'equipments': added_equipments, 'measurements': added_measurements}
+
+
+def import_data_from_df(df: pd.DataFrame, replace: bool = False) -> Dict[str, int]:
     """
     Import data from DataFrame to SQLite with normalized structure.
     Returns count of equipments and measurements added.
     """
     if df.empty:
         return {'equipments': 0, 'measurements': 0}
+        
+    if replace:
+        recreate_tables()
         
     conn = get_connection()
     c = conn.cursor()
@@ -146,6 +323,10 @@ def import_data_from_df(df: pd.DataFrame) -> Dict[str, int]:
     conn.close()
     
     return {'equipments': added_equipments, 'measurements': added_measurements}
+
+def sync_from_dataframe(df: pd.DataFrame) -> Dict[str, int]:
+    """Wrapper for import_data_from_df to be used by GSheets sync. Defaults to replace=True."""
+    return import_data_from_df(df, replace=True)
 
 def insert_single_record(data: Dict[str, Any]):
     """Insert a single record (Equipment + Measurement) from web form."""
