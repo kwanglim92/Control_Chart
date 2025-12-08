@@ -662,13 +662,15 @@ def hide_streamlit_style():
     hide_st_style = """
         <style>
         /* MainMenu는 테마 설정을 위해 보이게 함 */
-        /* #MainMenu {visibility: hidden;} */
+        #MainMenu {visibility: visible;}
         
-        /* 상단 헤더의 Fork/Deploy 버튼 숨기기 */
-        [data-testid="stHeaderActionElements"] {visibility: hidden;}
+        /* 상단 헤더의 Fork/Deploy 버튼 숨기기 (더 강력한 셀렉터 사용) */
+        .stDeployButton {display: none !important;}
+        [data-testid="stHeaderActionElements"] {display: none !important;}
         
         /* 푸터 숨기기 */
-        footer {visibility: hidden;}
+        footer {visibility: hidden !important;}
+        header > .st-emotion-cache-12fmw14 {display: none !important;} /* 가끔 사용되는 클래스 */
         </style>
         """
     st.markdown(hide_st_style, unsafe_allow_html=True)
