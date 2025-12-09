@@ -223,8 +223,12 @@ def render_explorer_tab():
                 
                 df_list = df_list.sort_values('date', ascending=False).reset_index(drop=True)
                 
+                # SID Display Logic
+                # If SID is missing, display as empty string
+                df_list['display_sid'] = df_list['sid'].fillna('')
+                
                 event = st.dataframe(
-                    df_list[['equipment_name', 'model', 'date']],
+                    df_list[['display_sid', 'equipment_name', 'model', 'date']],
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",
@@ -232,6 +236,7 @@ def render_explorer_tab():
                     key=f"list_{ri_type}",
                     height=300,
                     column_config={
+                        "display_sid": st.column_config.TextColumn("SID"),
                         "date": st.column_config.DateColumn(
                             "Date",
                             format="YYYY-MM-DD",
@@ -282,6 +287,13 @@ def render_explorer_tab():
                         c_head, c_body = st.columns([1, 3])
                         with c_head:
                             st.markdown(f"## 🏷️")
+                            
+                            # SID Display
+                            sid_val = equip_info.get('sid')
+                            sid_str = str(sid_val) if pd.notna(sid_val) and str(sid_val).strip() != '' else ''
+                            if sid_str:
+                                st.caption(f"**SID: {sid_str}**")
+                                
                             st.markdown(f"**{equip_info['equipment_name']}**")
                             st.caption(f"{equip_info['ri']} | {equip_info['model']}")
                             st.caption(f"📅 {equip_info['date'].strftime('%Y-%m-%d')}")
@@ -294,7 +306,7 @@ def render_explorer_tab():
                                 st.write(f"Scanner: `{equip_info['xy_scanner']}`")
                             with c2:
                                 st.markdown("**옵션 사양**")
-                                st.write(f"Stage: `{equip_info['sliding_stage']}`")
+                                st.write(f"Sliding Stage: `{equip_info['sliding_stage']}`")
                                 st.write(f"Chuck: `{equip_info['sample_chuck']}`")
                             with c3:
                                 st.markdown("**기타**")
@@ -313,7 +325,7 @@ def render_explorer_tab():
                         comp_data['date'] = comp_data['date'].dt.strftime('%Y-%m-%d')
                         
                     # Transpose for side-by-side view
-                    cols_to_compare = ['ri', 'model', 'date', 'head_type', 'xy_scanner', 'sliding_stage', 'sample_chuck', 'ae', 'mod_vit']
+                    cols_to_compare = ['sid', 'ri', 'model', 'date', 'head_type', 'xy_scanner', 'sliding_stage', 'sample_chuck', 'ae', 'mod_vit']
                     df_comp = comp_data[cols_to_compare].T
                     st.dataframe(df_comp, use_container_width=True)
                     
