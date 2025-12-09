@@ -1,0 +1,27 @@
+# Streamlit Configuration File
+
+[client]
+# Toolbar 모드 설정 (viewer로 하면 최소화)
+toolbarMode = "viewer"
+
+# 에러 상세 정보 숨기기
+showErrorDetails = false
+
+# 사이드바 자동 닫기 비활성화
+showSidebarNavigation = true
+
+[browser]
+# 사용 통계 수집 비활성화
+gatherUsageStats = false
+
+[server]
+# 파일 변경 감지 비활성화 (운영 모드)
+fileWatcherType = "none"
+runOnSave = false
+
+[theme]
+# 깔끔한 UI를 위한 테마 설정 (선택 사항)
+primaryColor = "#FF4B4B"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#262730"
+textColor = "#FAFAFA"
