@@ -657,68 +657,7 @@ def render_guide_tab():
     """)
 
 
-def hide_streamlit_style():
-    """Streamlit 기본 스타일 숨기기 (CSS + JavaScript DOM 조작)"""
-    hide_code = """
-        <style>
-        /* CSS로 일단 숨기기 (백업) */
-        .css-1jc7ptx, .e1ewe7hr3, .viewerBadge_container__1QSob,
-        .styles_viewerBadge__1yB5_, .viewerBadge_link__1S137,
-        .viewerBadge_text__1JaDK {
-            display: none !important;
-        }
-        [data-testid="stHeaderActionElements"] {
-            display: none !important;
-        }
-        footer {
-            visibility: hidden !important;
-            display: none !important;
-        }
-        </style>
-        
-        <script>
-        // JavaScript로 DOM에서 직접 제거
-        function hideStreamlitBranding() {
-            // 1. GitHub 링크 (Fork 버튼) 제거
-            document.querySelectorAll('header a[href*="github"]').forEach(el => {
-                el.style.display = 'none';
-                el.remove();
-            });
-            
-            // 2. 헤더 액션 버튼 제거
-            document.querySelectorAll('[data-testid="stHeaderActionElements"]').forEach(el => {
-                el.style.display = 'none';
-                el.remove();
-            });
-            
-            // 3. 푸터 제거
-            document.querySelectorAll('footer, [data-testid="stFooter"]').forEach(el => {
-                el.style.display = 'none';
-                el.remove();
-            });
-            
-            // 4. ViewerBadge 클래스 제거
-            const badgeSelectors = '.viewerBadge_container__1QSob, .styles_viewerBadge__1yB5_, .viewerBadge_link__1S137, .viewerBadge_text__1JaDK, .css-1jc7ptx, .e1ewe7hr3';
-            document.querySelectorAll(badgeSelectors).forEach(el => {
-                el.style.display = 'none';
-                el.remove();
-            });
-        }
-        
-        // 즉시 실행
-        hideStreamlitBranding();
-        
-        // 주기적으로 체크 (100ms마다, Streamlit이 동적으로 요소를 추가할 수 있으므로)
-        const interval = setInterval(hideStreamlitBranding, 100);
-        
-        // 10초 후 타이머 중지 (성능 최적화)
-        setTimeout(() => clearInterval(interval), 10000);
-        </script>
-        """
-    st.markdown(hide_code, unsafe_allow_html=True)
-
 def main():
-    hide_streamlit_style()
     st.title("Control Chart Viewer v1.0")
     
     # Sidebar (Analysis Filters)
