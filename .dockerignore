@@ -1,0 +1,22 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+# We exclude secrets.toml to avoid baking credentials into the image.
+# It should be mounted as a volume or passed as environment variables.
+
+# Database (Local DB should not be copied, use volume for persistence)
+*.db
+
+# IDE
+.vscode
+.idea

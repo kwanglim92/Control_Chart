@@ -58,15 +58,50 @@ cd streamlit_app
 pip install -r requirements.txt
 ```
 
-### 2. Google Sheets 연동 설정
-- `.streamlit/secrets.toml` 파일에 Google Cloud 서비스 계정 정보와 시트 URL을 입력해야 합니다.
-- 자세한 내용은 `AUTO_LOAD_GUIDE.md`를 참고하세요.
+### 2. 관리자 비밀번호 설정 (환경변수)
+
+#### Windows (PowerShell)
+```powershell
+# 현재 세션만
+$env:ADMIN_PASSWORD="pqc123"
+
+# 영구 설정 (선택사항)
+[System.Environment]::SetEnvironmentVariable('ADMIN_PASSWORD', 'pqc123', 'User')
+```
+
+#### Linux/Mac
+```bash
+export ADMIN_PASSWORD="pqc123"
+```
 
 ### 3. 실행
-`run.bat` 파일을 더블 클릭하거나 터미널에서 아래 명령어를 실행하세요.
+
+#### 로컬 실행
+터미널에서 아래 명령어를 실행하세요.
 ```bash
+# 환경변수 설정 (Windows)
+$env:ADMIN_PASSWORD="pqc123"
+
+# 앱 실행
 streamlit run app.py
 ```
+
+#### Docker 실행 (서버 배포)
+```bash
+# 1. 관리자 비밀번호 설정 (docker-compose.yml 수정)
+# environment:
+#   - ADMIN_PASSWORD=your_secure_password_here
+
+# 2. Docker 컨테이너 빌드 및 실행
+docker-compose up -d
+
+# 3. 브라우저에서 접속
+# http://your-server-ip:80
+```
+
+**관리자 비밀번호 설정 방법:**
+1. `docker-compose.yml` 파일에서 `ADMIN_PASSWORD` 값 변경
+2. 설정하지 않으면 기본값 `admin123` 사용 (개발용)
 
 ## 💡 사용 팁
 - **데이터 동기화**: `데이터 관리` 탭에서 'Google Sheets 동기화 실행'을 누르면 최신 데이터를 불러옵니다.

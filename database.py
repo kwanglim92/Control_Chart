@@ -32,7 +32,12 @@ def init_db():
             sliding_stage TEXT,          -- Sliding Stage
             sample_chuck TEXT,           -- Sample Chuck
             ae TEXT,                     -- AE
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            end_user TEXT,               -- End User (고객사)
+            mfg_engineer TEXT,           -- Manufacturing Engineer
+            qc_engineer TEXT,            -- Production QC Engineer
+            reference_doc TEXT,          -- Reference Document (체크리스트 버전)
+            status TEXT DEFAULT 'pending', -- pending / approved
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     
@@ -42,8 +47,12 @@ def init_db():
         CREATE TABLE IF NOT EXISTS measurements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             equipment_id INTEGER,        -- FK to equipments.id
-            check_item TEXT,             -- 측정 항목
+            check_item TEXT,             -- 측정 항목 (legacy)
+            check_items TEXT,            -- 측정 항목 (new)
             value REAL,                  -- 측정 값
+            sid TEXT,                    -- SID Number (denormalized for query)
+            equipment_name TEXT,         -- Equipment Name (denormalized)
+            status TEXT DEFAULT 'pending', -- pending / approved
             FOREIGN KEY (equipment_id) REFERENCES equipments (id)
         )
     ''')
@@ -60,6 +69,126 @@ def init_db():
             PRIMARY KEY (model, check_item)
         )
     ''')
+
+    # 4. Approve History Table (Approval/Rejection tracking)
+    # 모든 승인/반려 이력을 기록합니다
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS approval_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sid TEXT NOT NULL,                     -- SID Number
+            equipment_id INTEGER,                  -- FK to equipments.id (nullable)
+            action TEXT NOT NULL,                  -- 'approved', 'rejected', 'resubmitted'
+            admin_name TEXT,                       -- 관리자 이름
+            reason TEXT,                           -- 반려/승인 사유
+            previous_status TEXT,                  -- 이전 상태
+            new_status TEXT,                       -- 새 상태
+            modification_count INTEGER DEFAULT 0,  -- 수정 항목 개수
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            metadata TEXT                          -- JSON: 추가 정보
+        )
+    ''')
+
+    # 5. Pending Measurements Table (Staging Area)
+    # 업로드된 원본 데이터를 검증 전까지 그대로 보관하는 테이블
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS pending_measurements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sid TEXT NOT NULL,
+            equipment_name TEXT,
+            category TEXT,
+            check_items TEXT,
+            min_value REAL,
+            criteria REAL,
+            max_value REAL,
+            value REAL,
+            unit TEXT,
+            pass_fail TEXT,
+            trend TEXT,
+            remark TEXT,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Migration: Add new columns if they don't exist (for backward compatibility)
+    
+    # Equipments table migrations
+    try:
+        c.execute("ALTER TABLE equipments ADD COLUMN end_user TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    
+    try:
+        c.execute("ALTER TABLE equipments ADD COLUMN mfg_engineer TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE equipments ADD COLUMN qc_engineer TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE equipments ADD COLUMN reference_doc TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
+    # Measurements table migrations
+    try:
+        c.execute("ALTER TABLE measurements ADD COLUMN sid TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE measurements ADD COLUMN equipment_name TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE measurements ADD COLUMN status TEXT DEFAULT 'pending'")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE measurements ADD COLUMN check_items TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
+    # Data migration: Copy check_item to check_items if needed
+    try:
+        c.execute("""
+            UPDATE measurements 
+            SET check_items = check_item 
+            WHERE check_items IS NULL AND check_item IS NOT NULL
+        """)
+    except sqlite3.OperationalError:
+        pass
+    # pending_measurements table migrations
+    try:
+        c.execute("ALTER TABLE pending_measurements ADD COLUMN module TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    
+    # Add TEXT columns to preserve original data format (e.g. "0x6e31041e" stays as text)
+    try:
+        c.execute("ALTER TABLE pending_measurements ADD COLUMN min_text TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE pending_measurements ADD COLUMN criteria_text TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE pending_measurements ADD COLUMN max_text TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE pending_measurements ADD COLUMN value_text TEXT")
+    except sqlite3.OperationalError:
+        pass
     
     conn.commit()
     conn.close()
@@ -190,10 +319,19 @@ def sync_relational_data(df_equip: pd.DataFrame, df_meas: pd.DataFrame, df_specs
             else:
                 continue # Skip if no identifier
         
-        # Insert Equipment
+        # Insert Equipment (Default status='pending' for new uploads via this function, 
+        # but if this function is used for bulk import, maybe we want 'approved'?)
+        # Let's assume bulk import via this function is 'approved' for now or 'pending'.
+        # For now, let's default to 'approved' if it's a migration, but 'pending' if it's user upload.
+        # Actually, this function 'sync_relational_data' seems to be legacy or bulk import.
+        # Let's set default to 'approved' for bulk sync to maintain backward compatibility if used.
+        
         cols = ['sid', 'equipment_name', 'date', 'ri', 'model', 'xy_scanner', 
-                'head_type', 'mod_vit', 'sliding_stage', 'sample_chuck', 'ae']
-        vals = [row.get(col) for col in cols]
+                'head_type', 'mod_vit', 'sliding_stage', 'sample_chuck', 'ae', 'status']
+        
+        # Prepare values
+        vals = [row.get(col) for col in cols[:-1]] # All except status
+        vals.append('approved') # Default status for bulk sync
         
         placeholders = ', '.join(['?'] * len(cols))
         cols_str = ', '.join(cols)
@@ -205,7 +343,7 @@ def sync_relational_data(df_equip: pd.DataFrame, df_meas: pd.DataFrame, df_specs
             added_equipments += 1
         except sqlite3.IntegrityError:
             # Duplicate SID? Skip or Update?
-            print(f"Duplicate SID skipped: {sid}")
+            # For now, skip
             pass
 
     # 3. Sync Measurements
@@ -237,6 +375,393 @@ def sync_relational_data(df_equip: pd.DataFrame, df_meas: pd.DataFrame, df_specs
     conn.close()
     
     return {'equipments': added_equipments, 'measurements': added_measurements}
+
+
+def insert_equipment_from_excel(df_equip: pd.DataFrame, df_meas: pd.DataFrame) -> Dict[str, int]:
+    """
+    Insert data from uploaded Excel file with status='pending'.
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    
+    added_equipments = 0
+    added_measurements = 0
+    
+    # Column mapping (Same as sync_relational_data)
+    col_map_equip = {
+        'SID': 'sid', '장비명': 'equipment_name', '종료일': 'date', 'R/I': 'ri', 'Model': 'model',
+        'XY Scanner': 'xy_scanner', 'Head Type': 'head_type', 'MOD/VIT': 'mod_vit',
+        'Sliding Stage': 'sliding_stage', 'Sample Chuck': 'sample_chuck', 'AE': 'ae'
+    }
+    df_e = df_equip.rename(columns=col_map_equip)
+    if 'date' in df_e.columns:
+        df_e['date'] = df_e['date'].astype(str)
+        
+    sid_to_id = {}
+    sid_to_name = {}  # SID → Equipment Name mapping
+    
+    for _, row in df_e.iterrows():
+        sid = row.get('sid')
+        if pd.isna(sid) or str(sid).strip() == '':
+            if pd.notna(row.get('equipment_name')):
+                sid = row.get('equipment_name')
+            else:
+                continue
+
+        cols = ['sid', 'equipment_name', 'date', 'ri', 'model', 'xy_scanner', 
+                'head_type', 'mod_vit', 'sliding_stage', 'sample_chuck', 'ae', 'status']
+        
+        vals = [row.get(col) for col in cols[:-1]]
+        vals.append('pending') # Set status to pending
+        
+        placeholders = ', '.join(['?'] * len(cols))
+        cols_str = ', '.join(cols)
+        
+        try:
+            c.execute(f"INSERT INTO equipments ({cols_str}) VALUES ({placeholders})", vals)
+            equip_id = c.lastrowid
+            sid_to_id[str(sid)] = equip_id
+            sid_to_name[str(sid)] = row.get('equipment_name', '')  # Store equipment name
+            added_equipments += 1
+        except sqlite3.IntegrityError:
+            # If SID exists, we might want to update or skip. 
+            # For upload, maybe reject if exists? Or allow update?
+            # Let's skip for now to avoid overwriting approved data easily.
+            print(f"Duplicate SID skipped during upload: {sid}")
+            pass
+
+    # Measurements
+    col_map_meas = {'SID': 'sid', '장비명': 'equipment_name', 'Check Items': 'check_item', 'Value': 'value'}
+    df_m = df_meas.rename(columns=col_map_meas)
+    
+    for _, row in df_m.iterrows():
+        sid = row.get('sid')
+        if pd.isna(sid) or str(sid).strip() == '':
+            if pd.notna(row.get('equipment_name')):
+                sid = row.get('equipment_name')
+            else:
+                continue
+        
+        equip_id = sid_to_id.get(str(sid))
+        if equip_id:
+            if pd.notna(row.get('check_item')) and pd.notna(row.get('value')):
+                equipment_name = sid_to_name.get(str(sid), '')
+                check_item_value = row['check_item']
+                
+                # Insert with all required columns: sid, equipment_name, check_items, status
+                c.execute('''
+                    INSERT INTO measurements 
+                    (equipment_id, check_item, check_items, value, sid, equipment_name, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (equip_id, check_item_value, check_item_value, row['value'], 
+                      str(sid), equipment_name, 'pending'))
+                added_measurements += 1
+                
+    conn.commit()
+    conn.close()
+    
+    # Insert into pending_measurements (Staging)
+    # Group by SID to handle multiple equipments in one upload
+    for sid, equip_id in sid_to_id.items():
+        # Filter measurements for this SID
+        # Note: df_meas has 'SID' column
+        equip_meas = df_meas[df_meas['SID'].astype(str) == str(sid)]
+        if not equip_meas.empty:
+            equipment_name = sid_to_name.get(str(sid), '')
+            insert_pending_measurements(equip_meas, str(sid), equipment_name)
+    
+    return {'equipments': added_equipments, 'measurements': added_measurements}
+
+
+def insert_pending_measurements(df_meas: pd.DataFrame, sid: str, equipment_name: str):
+    """
+    Insert raw measurement data into pending_measurements table.
+    df_meas should contain columns from the upload preview.
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    
+    # Clean up existing pending measurements for this SID to prevent duplicates
+    # (e.g. if user re-uploads the same file)
+    c.execute("DELETE FROM pending_measurements WHERE sid = ? AND status = 'pending'", (sid,))
+    
+    for _, row in df_meas.iterrows():
+        # Handle NaN values for numeric columns
+        val = row.get('Measurement')
+        if pd.isna(val): val = None
+        
+        # Convert to string for TEXT columns (preserves original format like "0x6e31041e")
+        def to_text(value):
+            if pd.isna(value):
+                return ''
+            return str(value)
+        
+        c.execute("""
+            INSERT INTO pending_measurements 
+            (sid, equipment_name, module, category, check_items, 
+             min_value, criteria, max_value, value, 
+             min_text, criteria_text, max_text, value_text,
+             unit, pass_fail, trend, remark)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            sid, 
+            equipment_name,
+            row.get('Module'),
+            row.get('Category'), 
+            row.get('Check Items'), 
+            row.get('Min'),         # Numeric (for analysis)
+            row.get('Criteria'),
+            row.get('Max'), 
+            val, 
+            to_text(row.get('Min')),      # Text (for display)
+            to_text(row.get('Criteria')),
+            to_text(row.get('Max')),
+            to_text(row.get('Measurement')),
+            row.get('Unit'), 
+            row.get('PASS/FAIL'),
+            row.get('Trend'), 
+            row.get('Remark')
+        ))
+    
+    conn.commit()
+    conn.close()
+
+def get_pending_measurements(sid: str) -> pd.DataFrame:
+    """
+    Get measurements for a specific SID with full columns.
+    Returns only rows where Trend is present (for Control Chart analysis).
+    Includes both pending and approved data.
+    """
+    conn = get_connection()
+    query = """
+        SELECT 
+            id, sid, equipment_name, category as Category, check_items as "Check Items", 
+            min_value as Min, criteria as Criteria, max_value as Max, 
+            value as Measurement, unit as Unit, pass_fail as "PASS/FAIL", 
+            trend as Trend, remark as Remark, status
+        FROM pending_measurements
+        WHERE sid = ? AND status IN ('pending', 'approved')
+          AND trend IS NOT NULL AND trend != ''
+          AND value IS NOT NULL
+    """
+    df = pd.read_sql_query(query, conn, params=(sid,))
+    conn.close()
+    return df
+
+
+def get_full_measurements(sid: str) -> pd.DataFrame:
+    """
+    Get ALL detailed measurements from pending_measurements table for a SID,
+    regardless of status (pending/approved/rejected).
+    Used for the Dashboard 'Full Data View'.
+    Returns columns in Excel original order (matching upload preview).
+    """
+    conn = get_connection()
+    query = """
+        SELECT 
+            module as Module,
+            check_items as "Check Items", 
+            min_text as Min, 
+            criteria_text as Criteria, 
+            max_text as Max, 
+            value_text as Measurement, 
+            unit as Unit, 
+            pass_fail as "PASS/FAIL",
+            category as Category, 
+            trend as Trend, 
+            remark as Remark
+        FROM pending_measurements
+        WHERE sid = ?
+        ORDER BY id ASC
+    """
+    df = pd.read_sql_query(query, conn, params=(sid,))
+    conn.close()
+    
+    # Replace None with empty string for better display
+    df = df.fillna('')
+    
+    # Add row number column at the beginning
+    df.insert(0, '#', range(1, len(df) + 1))
+    
+    return df
+
+
+def get_equipment_status(sid: str) -> str:
+    """
+    Check the current status of an equipment by SID.
+    Returns: 'approved', 'rejected', 'pending', or None (if not exists)
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    # SID 중복이 있을 수 있으니 최신 것 하나만 가져옴 (ID 역순)
+    c.execute("SELECT status FROM equipments WHERE sid = ? ORDER BY id DESC LIMIT 1", (sid,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def get_all_equipments(filters: dict = None) -> pd.DataFrame:
+    """
+    Get all equipments with optional filtering.
+    filters: {
+        'status': ['approved', 'pending', ...],
+        'model': ['NX-Wafer', ...],
+        'date_range': [start_date, end_date],
+        'search': 'keyword'
+    }
+    """
+    conn = get_connection()
+    query = "SELECT * FROM equipments WHERE 1=1"
+    params = []
+    
+    if filters:
+        if 'status' in filters and filters['status']:
+            placeholders = ','.join(['?'] * len(filters['status']))
+            query += f" AND status IN ({placeholders})"
+            params.extend(filters['status'])
+            
+        if 'model' in filters and filters['model']:
+            placeholders = ','.join(['?'] * len(filters['model']))
+            query += f" AND model IN ({placeholders})"
+            params.extend(filters['model'])
+            
+        if 'date_range' in filters and filters['date_range'] and len(filters['date_range']) == 2:
+            query += " AND date BETWEEN ? AND ?"
+            params.extend(filters['date_range'])
+            
+        if 'search' in filters and filters['search']:
+            keyword = f"%{filters['search']}%"
+            query += " AND (sid LIKE ? OR equipment_name LIKE ?)"
+            params.extend([keyword, keyword])
+            
+    query += " ORDER BY id DESC"
+    
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    
+    # 날짜 컬럼 변환
+    if 'date' in df.columns:
+        df['date'] = pd.to_datetime(df['date'])
+        
+    return df
+
+
+def get_pending_equipments() -> pd.DataFrame:
+    """Get all equipments with status='pending'."""
+    conn = get_connection()
+    query = "SELECT * FROM equipments WHERE status = 'pending' ORDER BY uploaded_at DESC"
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
+
+def approve_equipment(equip_id: int):
+    """Approve an equipment by ID."""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE equipments SET status = 'approved' WHERE id = ?", (equip_id,))
+    conn.commit()
+    conn.close()
+
+def reject_equipment(equip_id: int, reason: str = None, admin_name: str = None):
+    """
+    Reject an equipment (change status to 'rejected' instead of deleting).
+    
+    Args:
+        equip_id: Equipment ID
+        reason: Rejection reason
+        admin_name: Admin who rejected
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    
+    # Get SID first to update pending_measurements
+    c.execute("SELECT sid FROM equipments WHERE id = ?", (equip_id,))
+    row = c.fetchone()
+    if row:
+        sid = row[0]
+        # Update pending_measurements
+        c.execute("UPDATE pending_measurements SET status = 'rejected' WHERE sid = ? AND status = 'pending'", (sid,))
+    
+    # Change status to rejected instead of deleting
+    c.execute("UPDATE equipments SET status = 'rejected' WHERE id = ?", (equip_id,))
+    c.execute("UPDATE measurements SET status = 'rejected' WHERE equipment_id = ?", (equip_id,))
+    conn.commit()
+    conn.close()
+
+def delete_equipment(equip_id: int):
+    """Delete an equipment and its measurements by ID (legacy function)."""
+    conn = get_connection()
+    c = conn.cursor()
+    # Delete measurements first (Cascade logic if not set in DB)
+    c.execute("DELETE FROM measurements WHERE equipment_id = ?",(equip_id,))
+    c.execute("DELETE FROM equipments WHERE id = ?", (equip_id,))
+    conn.commit()
+    conn.close()
+
+def log_approval_history(sid: str, equipment_id: int = None, action: str = None, 
+                         admin_name: str = None, reason: str = None, 
+                         previous_status: str = None, new_status: str = None,
+                         modification_count: int = 0, metadata: str = None):
+    """
+    Log approval/rejection history.
+    
+    Args:
+        sid: SID number
+        equipment_id: Equipment ID (nullable)
+        action: 'approved', 'rejected', 'resubmitted'
+        admin_name: Admin name
+        reason: Approval/rejection reason
+        previous_status: Previous status
+        new_status: New status
+        modification_count: Number of modifications made
+        metadata: JSON string with additional info
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO approval_history 
+        (sid, equipment_id, action, admin_name, reason, previous_status, new_status, modification_count, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (sid, equipment_id, action, admin_name, reason, previous_status, new_status, modification_count, metadata))
+    conn.commit()
+    conn.close()
+
+def check_previous_rejections(sid: str) -> pd.DataFrame:
+    """
+    Check if this SID was rejected before.
+    
+    Args:
+        sid: SID number
+    
+    Returns:
+        DataFrame with previous rejection history
+    """
+    conn = get_connection()
+    query = """
+        SELECT 
+            action,
+            admin_name,
+            reason,
+            timestamp,
+            modification_count
+        FROM approval_history
+        WHERE sid = ? AND action = 'rejected'
+        ORDER BY timestamp DESC
+        LIMIT 5
+    """
+    df = pd.read_sql_query(query, conn, params=(sid,))
+    conn.close()
+    return df
+
+
+def is_resubmitted(sid: str) -> bool:
+    """Check if the latest action for this SID was 'resubmitted'."""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT action FROM approval_history WHERE sid = ? ORDER BY timestamp DESC LIMIT 1", (sid,))
+    row = c.fetchone()
+    conn.close()
+    return row and row[0] == 'resubmitted'
 
 
 def import_data_from_df(df: pd.DataFrame, replace: bool = False) -> Dict[str, int]:
@@ -387,6 +912,7 @@ def fetch_filtered_data(filters: Dict[str, List[str]]) -> pd.DataFrame:
     conn = get_connection()
     
     # Base Query: JOIN equipments and measurements
+    # Only fetch approved equipments
     query = '''
         SELECT 
             e.date, e.equipment_name, e.ri, e.model, e.xy_scanner, 
@@ -394,7 +920,7 @@ def fetch_filtered_data(filters: Dict[str, List[str]]) -> pd.DataFrame:
             m.check_item, m.value
         FROM measurements m
         JOIN equipments e ON m.equipment_id = e.id
-        WHERE 1=1
+        WHERE e.status = 'approved'
     '''
     params = []
     
@@ -463,8 +989,8 @@ def get_equipment_stats() -> Dict[str, Any]:
     conn = get_connection()
     c = conn.cursor()
     
-    # Total counts
-    c.execute("SELECT COUNT(*) FROM equipments")
+    # Total counts (Approved only)
+    c.execute("SELECT COUNT(*) FROM equipments WHERE status = 'approved'")
     equip_count = c.fetchone()[0]
     
     c.execute("SELECT COUNT(*) FROM measurements")
@@ -474,6 +1000,7 @@ def get_equipment_stats() -> Dict[str, Any]:
     query = '''
         SELECT model, ri, COUNT(*) as count
         FROM equipments
+        WHERE status = 'approved'
         GROUP BY model, ri
         ORDER BY model, ri
     '''
@@ -487,23 +1014,52 @@ def get_equipment_stats() -> Dict[str, Any]:
         'breakdown': df_stats
     }
 
-def get_all_equipments() -> pd.DataFrame:
-    """Get all equipment details for explorer."""
-    conn = get_connection()
-    # Fetch all columns from equipments table
-    query = "SELECT * FROM equipments"
-    df = pd.read_sql_query(query, conn)
-    conn.close()
-    
-    # Date processing
-    if 'date' in df.columns:
-        df['date'] = pd.to_datetime(df['date'])
-        df['Year'] = df['date'].dt.year
-        df['Month'] = df['date'].dt.month
-        df['Quarter'] = df['date'].dt.quarter.astype(str) + 'Q'
-        df['YearQuarter'] = df['date'].dt.strftime('%Y-') + df['Quarter']
-        df['YearMonth'] = df['date'].dt.strftime('%Y-%m')
-        
-    return df
 
+
+
+def get_measurements_by_sid(sid: str, status: str = 'approved') -> pd.DataFrame:
+    """
+    Get measurements by SID and status.
+    
+    Args:
+        sid: SID number
+        status: 'approved', 'pending', or 'all'
+    
+    Returns:
+        DataFrame with measurements
+    """
+    conn = get_connection()
+    
+    # Use COALESCE to handle both check_item and check_items columns
+    if status == 'all':
+        query = """
+            SELECT 
+                id,
+                equipment_id,
+                COALESCE(check_items, check_item) as check_items,
+                value,
+                sid,
+                equipment_name,
+                status
+            FROM measurements 
+            WHERE sid = ?
+        """
+        df = pd.read_sql_query(query, conn, params=(sid,))
+    else:
+        query = """
+            SELECT 
+                id,
+                equipment_id,
+                COALESCE(check_items, check_item) as check_items,
+                value,
+                sid,
+                equipment_name,
+                status
+            FROM measurements 
+            WHERE sid = ? AND status = ?
+        """
+        df = pd.read_sql_query(query, conn, params=(sid, status))
+    
+    conn.close()
+    return df
 

@@ -1,0 +1,13 @@
+services:
+  app:
+    build: .
+    container_name: control_chart_app
+    ports:
+      - "80:8501"
+    volumes:
+      # Persist the SQLite database
+      - ./control_chart.db:/app/control_chart.db
+    restart: always
+    environment:
+      - TZ=Asia/Seoul # Set timezone
+      - ADMIN_PASSWORD=pqc123 # Admin password
