@@ -528,7 +528,282 @@ def render_explorer_tab():
     else:
         st.info("데이터가 없습니다. 데이터 관리 탭에서 동기화를 실행해주세요.")
 
+def analyze_current_data_context(df):
+    """
+    현재 필터링된 데이터의 컨텍스트 분석
+    품질엔지니어가 데이터를 이해하고 신뢰할 수 있도록 핵심 정보 추출
+    
+    Returns:
+        dict: 데이터 요약 정보
+    """
+    if df is None or df.empty:
+        return None
+    
+    context = {
+        # 기본 정보
+        'check_items': df['Check Items'].unique().tolist() if 'Check Items' in df.columns else [],
+        'models': df['Model'].unique().tolist() if 'Model' in df.columns else [],
+        'equipments': df['장비명'].unique().tolist() if '장비명' in df.columns else [],
+        'n_equipments': df['장비명'].nunique() if '장비명' in df.columns else 0,
+        'n_measurements': len(df),
+        
+        # 기간
+        'date_start': df['종료일'].min() if '종료일' in df.columns else None,
+        'date_end': df['종료일'].max() if '종료일' in df.columns else None,
+        'date_range_days': 0,
+        
+        # 구성 분포
+        'scanner_dist': {},
+        'head_dist': {},
+        'mod_vit_dist': {},
+        
+        # 핵심 지표 (단일 Check Item인 경우만)
+        'cpk': None,
+        'cp': None,
+        'defect_rate': None,
+        'spec_margin': None,
+        'mean': None,
+        'std': None,
+        'n_out_of_spec': 0
+    }
+    
+    # 기간 계산
+    if context['date_start'] and context['date_end']:
+        context['date_range_days'] = (context['date_end'] - context['date_start']).days
+    
+    # 구성 분포
+    if 'XY Scanner' in df.columns:
+        context['scanner_dist'] = df['XY Scanner'].replace('', None).dropna().value_counts().to_dict()
+    if 'Head Type' in df.columns:
+        context['head_dist'] = df['Head Type'].replace('', None).dropna().value_counts().to_dict()
+    if 'MOD/VIT' in df.columns:
+        context['mod_vit_dist'] = df['MOD/VIT'].replace('', None).dropna().value_counts().to_dict()
+    
+    # 단일 Check Item인 경우 Cpk 및 스펙 분석
+    if len(context['check_items']) == 1 and 'Value' in df.columns:
+        try:
+            item = context['check_items'][0]
+            
+            # 측정값 추출
+            measurements = df['Value'].dropna()
+            
+            if len(measurements) > 0:
+                mean = measurements.mean()
+                std = measurements.std()
+                
+                context['mean'] = mean
+                context['std'] = std
+                
+                # 스펙 정보 추출 시도
+                # measurements 테이블에는 스펙 정보 없으므로, specs 테이블에서 조회
+                # 임시로 데이터에서 model 확인
+                if len(context['models']) == 1:
+                    model = context['models'][0]
+                    # specs 조회
+                    specs = db.get_spec_for_item(model, item)
+                    
+                    if specs and specs.get('lsl') is not None and specs.get('usl') is not None:
+                        lsl = specs['lsl']
+                        usl = specs['usl']
+                        
+                        # Cp 계산 (공정 능력)
+                        if std > 0:
+                            context['cp'] = (usl - lsl) / (6 * std)
+                        
+                        # Cpk 계산 (공정 능력 지수)
+                        if std > 0:
+                            cpu = (usl - mean) / (3 * std)
+                            cpl = (mean - lsl) / (3 * std)
+                            context['cpk'] = min(cpu, cpl)
+                        
+                        # 불량률 계산
+                        out_of_spec = ((measurements < lsl) | (measurements > usl)).sum()
+                        context['n_out_of_spec'] = int(out_of_spec)
+                        context['defect_rate'] = (out_of_spec / len(measurements)) * 100
+                        
+                        # 스펙 여유도 계산
+                        spec_range = usl - lsl
+                        process_range = 6 * std
+                        context['spec_margin'] = ((spec_range - process_range) / spec_range) * 100
+        except Exception as e:
+            # 계산 중 오류 발생 시 무시 (지표는 None으로 유지)
+            pass
+    
+    return context
+
+
+
+
+def render_data_context_card(df):
+    """
+    데이터 컨텍스트를 명확한 카드 형식으로 표시
+    품질엔지니어가 현재 분석 중인 데이터를 즉시 이해하고 신뢰할 수 있게 함
+    """
+    context = analyze_current_data_context(df)
+    
+    if context is None:
+        st.warning("⚠️ 데이터가 없습니다.")
+        return
+    
+    # 카드 스타일
+    with st.container(border=True):
+        st.markdown("### 📊 현재 분석 중인 데이터")
+        
+        # 2열 레이아웃: 왼쪽(정보), 오른쪽(지표)
+        col_left, col_right = st.columns([2, 1])
+        
+        with col_left:
+            st.markdown("#### 데이터 범위")
+            
+            # Check Items
+            if len(context['check_items']) == 1:
+                st.markdown(f"✓ **Check Item**: {context['check_items'][0]}")
+            elif len(context['check_items']) > 1:
+                st.markdown(f"✓ **Check Items**: {len(context['check_items'])}개 항목")
+                with st.expander("📋 항목 목록 보기"):
+                    for item in context['check_items']:
+                        st.markdown(f"- {item}")
+            
+            # Model & 장비 수
+            if len(context['models']) == 1:
+                st.markdown(f"✓ **Model**: {context['models'][0]} ({context['n_equipments']}대 장비)")
+            elif len(context['models']) > 1:
+                st.markdown(f"✓ **Models**: {len(context['models'])}개 모델, 총 {context['n_equipments']}대 장비")
+                with st.expander("📋 모델 목록 보기"):
+                    model_counts = {}
+                    for idx, row in df.iterrows():
+                        model = row.get('Model')
+                        equip = row.get('장비명')
+                        if model and equip:
+                            if model not in model_counts:
+                                model_counts[model] = set()
+                            model_counts[model].add(equip)
+                    for model, equips in model_counts.items():
+                        st.markdown(f"- {model}: {len(equips)}대")
+            
+            # 기간
+            if context['date_start'] and context['date_end']:
+                st.markdown(
+                    f"✓ **기간**: {context['date_start'].strftime('%Y-%m-%d')} ~ "
+                    f"{context['date_end'].strftime('%Y-%m-%d')} ({context['date_range_days']}일)"
+                )
+            
+            # 측정값 수
+            st.markdown(f"✓ **총 측정값**: {context['n_measurements']:,}개")
+            
+            # 구성 분포 (상위 3개만)
+            config_shown = False
+            if context['scanner_dist']:
+                scanner_items = list(context['scanner_dist'].items())[:3]
+                scanner_str = ", ".join([f"{k} ({v}대)" for k, v in scanner_items])
+                st.markdown(f"✓ **Scanner**: {scanner_str}")
+                config_shown = True
+            
+            if context['head_dist'] and not config_shown:
+                head_items = list(context['head_dist'].items())[:3]
+                head_str = ", ".join([f"{k} ({v}대)" for k, v in head_items])
+                st.markdown(f"✓ **Head**: {head_str}")
+        
+        with col_right:
+            # 핵심 지표 (단일 Check Item이고 스펙이 있는 경우)
+            if context['cpk'] is not None:
+                st.markdown("#### 핵심 지표")
+                
+                # Cpk
+                cpk_val = context['cpk']
+                if cpk_val >= 1.67:
+                    cpk_delta = "🟢 매우우수"
+                    cpk_color = "normal"
+                elif cpk_val >= 1.33:
+                    cpk_delta = "🟢 우수"
+                    cpk_color = "normal"
+                elif cpk_val >= 1.0:
+                    cpk_delta = "🟡 양호"
+                    cpk_color = "off"
+                else:
+                    cpk_delta = "🔴 부적합"
+                    cpk_color = "inverse"
+                
+                st.metric(
+                    "Cpk (공정능력)",
+                    f"{cpk_val:.2f}",
+                    delta=cpk_delta,
+                    delta_color=cpk_color
+                )
+                
+                # 불량률
+                defect_val = context['defect_rate']
+                if defect_val == 0:
+                    st.metric("불량률", "0.0%", delta="✅ 모두 스펙 내", delta_color="normal")
+                elif defect_val < 0.3:
+                    st.metric(
+                        "불량률",
+                        f"{defect_val:.2f}%",
+                        delta=f"{context['n_out_of_spec']}개",
+                        delta_color="off"
+                    )
+                else:
+                    st.metric(
+                        "불량률",
+                        f"{defect_val:.1f}%",
+                        delta=f"⚠️ {context['n_out_of_spec']}개",
+                        delta_color="inverse"
+                    )
+                
+                # 스펙 여유도
+                margin_val = context['spec_margin']
+                if margin_val is not None:
+                    if margin_val > 40:
+                        margin_delta = "🔵 여유 많음"
+                        margin_color = "normal"
+                    elif margin_val > 20:
+                        margin_delta = "✅ 적정"
+                        margin_color = "normal"
+                    elif margin_val > 10:
+                        margin_delta = "⚠️ 주의"
+                        margin_color = "off"
+                    else:
+                        margin_delta = "🔴 부족"
+                        margin_color = "inverse"
+                    
+                    st.metric(
+                        "스펙 여유도",
+                        f"{margin_val:.1f}%",
+                        delta=margin_delta,
+                        delta_color=margin_color
+                    )
+            else:
+                # 지표가 없는 경우
+                st.markdown("#### 💡 안내")
+                if len(context['check_items']) != 1:
+                    st.info("**Check Item을 1개만** 선택하면\\n핵심 지표가 표시됩니다.")
+                elif len(context['models']) != 1:
+                    st.info("**Model을 1개만** 선택하면\\n핵심 지표가 표시됩니다.")
+                else:
+                    st.info("스펙 정보가 없어\\n핵심 지표를 계산할 수 없습니다.")
+        
+        # 구분선
+        st.divider()
+        
+        # 한 문장 요약
+        summary_parts = []
+        summary_parts.append(f"**{context['n_equipments']}대 장비**에서 측정한")
+        summary_parts.append(f"**{context['n_measurements']:,}개 데이터**")
+        
+        if context['defect_rate'] is not None:
+            if context['defect_rate'] == 0:
+                summary_parts.append("— **모든 측정값이 스펙 내에 있습니다** ✅")
+            elif context['defect_rate'] < 1:
+                summary_parts.append(f"— **{context['n_out_of_spec']}개**가 스펙 외부에 있습니다 ⚠️")
+            else:
+                summary_parts.append(f"— **불량률 {context['defect_rate']:.1f}%** 조치 필요 🔴")
+        
+        st.markdown(" ".join(summary_parts))
+
+
 def render_analysis_tab():
+
+
     """Tab 2: Quality Analysis"""
     st.header("📈 Control Chart 분석")
     
@@ -575,9 +850,229 @@ def render_analysis_tab():
     st.caption(f"선택 기간: {date_range[0]} ~ {date_range[1] if len(date_range)>1 else date_range[0]} | 데이터 수: {len(display_df)}건")
     st.divider()
     # -------------------------------
+    
+    # ========== 데이터 컨텍스트 카드 (Phase 0) ==========
+    render_data_context_card(display_df)
+    st.divider()
+    # ==================================================
+    
+    # ========== 상세 필터 (Phase 1) ==========
+    st.markdown("### 🔍 상세 필터")
+    st.caption("💡 아래 필터를 사용하여 데이터를 세밀하게 탐색할 수 있습니다. 차트만 업데이트됩니다.")
+    
+    with st.container(border=True):
+        # 2행 3열 레이아웃
+        filter_row1_col1, filter_row1_col2, filter_row1_col3 = st.columns(3)
+        filter_row2_col1, filter_row2_col2, filter_row2_col3 = st.columns(3)
+        
+        # Row 1
+        with filter_row1_col1:
+            st.markdown("**📋 Check Items**")
+            available_items = sorted(display_df['Check Items'].unique().tolist()) if 'Check Items' in display_df.columns else []
+            selected_items = st.multiselect(
+                "항목 선택",
+                options=available_items,
+                default=available_items,
+                key='filter_check_items',
+                label_visibility='collapsed',
+                help="분석할 Check Items를 선택하세요"
+            )
+        
+        with filter_row1_col2:
+            st.markdown("**🔎 장비명 검색**")
+            equipment_search = st.text_input(
+                "장비명 입력",
+                placeholder="Samsung, LG, WD...",
+                key='filter_equipment_search',
+                label_visibility='collapsed',
+                help="장비명의 일부를 입력하여 필터링"
+            )
+        
+        with filter_row1_col3:
+            st.markdown("**📦 Model**")
+            available_models = sorted(display_df['Model'].unique().tolist()) if 'Model' in display_df.columns else []
+            selected_models = st.multiselect(
+                "모델 선택",
+                options=available_models,
+                default=available_models,
+                key='filter_models',
+                label_visibility='collapsed',
+                help="분석할 모델을 선택하세요"
+            )
+        
+        # Row 2
+        with filter_row2_col1:
+            st.markdown("**🔬 XY Scanner**")
+            available_scanners = sorted(display_df['XY Scanner'].dropna().unique().tolist()) if 'XY Scanner' in display_df.columns else []
+            # 빈 문자열 제거
+            available_scanners = [s for s in available_scanners if s and str(s).strip()]
+            selected_scanners = st.multiselect(
+                "Scanner 선택",
+                options=available_scanners,
+                default=available_scanners,
+                key='filter_scanners',
+                label_visibility='collapsed',
+                help="Scanner 타입별 필터링"
+            )
+        
+        with filter_row2_col2:
+            st.markdown("**🎯 Head Type**")
+            available_heads = sorted(display_df['Head Type'].dropna().unique().tolist()) if 'Head Type' in display_df.columns else []
+            # 빈 문자열 제거
+            available_heads = [h for h in available_heads if h and str(h).strip()]
+            selected_heads = st.multiselect(
+                "Head 선택",
+                options=available_heads,
+                default=available_heads,
+                key='filter_heads',
+                label_visibility='collapsed',
+                help="Head 타입별 필터링"
+            )
+        
+        with filter_row2_col3:
+            # 필터 제어
+            st.markdown("**⚙️ 필터 제어**")
+            col_reset, col_info = st.columns([1, 1])
+            with col_reset:
+                if st.button("🔄 초기화", use_container_width=True, help="모든 필터를 기본값으로 복원"):
+                    # Session state 초기화
+                    for key in ['filter_check_items', 'filter_equipment_search', 
+                               'filter_models', 'filter_scanners', 'filter_heads']:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                    st.rerun()
+            with col_info:
+                # 필터 상태 표시
+                active_filters = 0
+                if selected_items and len(selected_items) < len(available_items):
+                    active_filters += 1
+                if equipment_search and equipment_search.strip():
+                    active_filters += 1
+                if selected_models and len(selected_models) < len(available_models):
+                    active_filters += 1
+                if selected_scanners and len(selected_scanners) < len(available_scanners):
+                    active_filters += 1
+                if selected_heads and len(selected_heads) < len(available_heads):
+                    active_filters += 1
+                
+                if active_filters > 0:
+                    st.metric("활성 필터", f"{active_filters}개", delta="필터링 중", delta_color="off")
+                else:
+                    st.info("전체\n데이터")
+    
+    st.divider()
+    # =========================================
+    
+    # ========== 필터 적용 로직 (Task 1.2) ==========
+    filtered_df = display_df.copy()
+    
+    # 1. Check Items 필터
+    if selected_items:
+        filtered_df = filtered_df[filtered_df['Check Items'].isin(selected_items)]
+    
+    # 2. 장비명 검색 필터 (대소문자 무시, 부분 일치)
+    if equipment_search and equipment_search.strip():
+        filtered_df = filtered_df[
+            filtered_df['장비명'].str.contains(equipment_search, case=False, na=False, regex=False)
+        ]
+    
+    # 3. Model 필터
+    if selected_models:
+        filtered_df = filtered_df[filtered_df['Model'].isin(selected_models)]
+    
+    # 4. Scanner 필터
+    if selected_scanners:
+        filtered_df = filtered_df[filtered_df['XY Scanner'].isin(selected_scanners)]
+    
+    # 5. Head 필터
+    if selected_heads:
+        filtered_df = filtered_df[filtered_df['Head Type'].isin(selected_heads)]
+    
+    # 필터 결과 표시
+    if filtered_df.empty:
+        st.warning("⚠️ 선택한 조건에 맞는 데이터가 없습니다. 필터를 조정해주세요.")
+        # 필터 초기화 제안
+        if st.button("🔄 필터 초기화하기"):
+            for key in ['filter_check_items', 'filter_equipment_search', 
+                       'filter_models', 'filter_scanners', 'filter_heads']:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
+        return
+    
+    # 데이터 변경 안내 (필터 적용됨)
+    if len(filtered_df) < len(display_df):
+        col_filter_info1, col_filter_info2 = st.columns([3, 1])
+        with col_filter_info1:
+            st.success(
+                f"📋 필터 적용 완료: **{len(filtered_df):,}개** 데이터 "
+                f"({len(filtered_df['장비명'].unique())}개 장비)"
+            )
+        with col_filter_info2:
+            reduction = (1 - len(filtered_df) / len(display_df)) * 100
+            st.metric("필터율", f"{reduction:.1f}%", delta=f"-{len(display_df) - len(filtered_df)}개")
+    
+    # 필터링된 데이터를 display_df로 교체
+    display_df = filtered_df
+    # ===============================================
+    
+    # ========== 현재 필터 조건 표시 (Task 1.3) ==========
+    with st.expander("📋 현재 필터 조건", expanded=False):
+        filter_summary = []
+        
+        # 기본 미터릭
+        col_metric1, col_metric2, col_metric3 = st.columns(3)
+        with col_metric1:
+            st.metric("적용 필터", f"{active_filters}개")
+        with col_metric2:
+            st.metric("최종 데이터", f"{len(display_df)}개")
+        with col_metric3:
+            st.metric("장비 수", f"{display_df['장비명'].nunique()}대")
+        
+        st.divider()
+        
+        # 상세 조건
+        if selected_items and len(selected_items) < len(available_items):
+            selected_str = ", ".join(selected_items[:5])
+            if len(selected_items) > 5:
+                selected_str += f" 외 {len(selected_items) - 5}개"
+            filter_summary.append(f"**Check Items**: {selected_str}")
+        
+        if equipment_search and equipment_search.strip():
+            filter_summary.append(f"**장비명 검색**: '{equipment_search}'")
+        
+        if selected_models and len(selected_models) < len(available_models):
+            models_str = ", ".join(selected_models)
+            filter_summary.append(f"**Model**: {models_str}")
+        
+        if selected_scanners and len(selected_scanners) < len(available_scanners):
+            scanner_str = ", ".join(selected_scanners[:3])
+            if len(selected_scanners) > 3:
+                scanner_str += f" 외 {len(selected_scanners) - 3}개"
+            filter_summary.append(f"**XY Scanner**: {scanner_str}")
+        
+        if selected_heads and len(selected_heads) < len(available_heads):
+            heads_str = ", ".join(selected_heads[:3])
+            if len(selected_heads) > 3:
+                heads_str += f" 외 {len(selected_heads) - 3}개"
+            filter_summary.append(f"**Head Type**: {heads_str}")
+        
+        if filter_summary:
+            st.markdown("적용 중인 필터:")
+            for item in filter_summary:
+                st.markdown(f"- {item}")
+        else:
+            st.info("구모든 필터가 기본 상태입니다. (전체 데이터 표시)")
+    # ===============================================
         
     # Tabs for Analysis Sub-views
-    tab1, tab2, tab3, tab4 = st.tabs(["종합 차트", "개별 차트", "통계 요약", "데이터"])
+    tab1, tab_spec, tab_equip, tab3, tab4 = st.tabs([
+        "📈 Trend 분석", 
+        "📊SPEC 분석", 
+        "🏭 장비 비교", 
+        "📉 통계 요약", 
+        "💾 데이터"
+    ])
     
     # Simplified Grouping Options (Time-based only)
     # 'None' means no grouping (single series), effectively grouping by nothing or just showing all data.
@@ -588,7 +1083,7 @@ def render_analysis_tab():
     group_options = ['None', '연도', '분기', '월']
     
     with tab1:
-        st.subheader("종합 관리도 (Combined Control Chart)")
+        st.subheader("📈 Trend 분석 (시계열 Control Chart)")
         
         c1, c2 = st.columns([1, 3])
         with c1:
@@ -655,63 +1150,197 @@ def render_analysis_tab():
             st.plotly_chart(fig_combined, use_container_width=True)
         except Exception as e:
             st.error(f"차트 생성 오류: {e}")
+    
+    # ========== 스펙 분석 탭 (Phase 2 - NEW) ==========
+    with tab_spec:
+        st.subheader("📊 스펙 분석 (Spec Analysis with Cpk)")
+        st.caption("💡 공정 능력 지수(Cpk)를 자동 계산하고, 스펙 적정성을 평가합니다.")
         
-    with tab2:
-        st.subheader("개별 관리도 (Individual Charts)")
+        # Import spec_analysis module
+        from spec_analysis import (
+            prepare_spec_data,
+            calculate_process_capability,
+            create_histogram_with_specs,
+            generate_insights
+        )
         
-        c1, c2 = st.columns([1, 3])
-        with c1:
-            group_by_ind_sel = st.selectbox("그룹화 기준 (개별)", group_options, index=0, key='ind_group')
+        # Check Item 선택
+        unique_items = display_df['Check Items'].unique().tolist() if 'Check Items' in display_df.columns else []
+        
+        if len(unique_items) == 0:
+            st.warning("⚠️ Check Item이 없습니다.")
+        elif len(unique_items) == 1:
+            selected_spec_item = unique_items[0]
+            st.info(f"분석 항목: **{selected_spec_item}**")
+        else:
+            selected_spec_item = st.selectbox(
+                "분석 항목 선택",
+                unique_items,
+                key='spec_analysis_item',
+                help="Cpk를 계산할 Check Item을 선택하세요"
+            )
+        
+        if len(unique_items) > 0:
+            item_df = display_df[display_df['Check Items'] == selected_spec_item]
             
-        # Logic for individual charts grouping
-        if group_by_ind_sel == 'None':
-            if display_df['Check Items'].nunique() > 1:
-                group_col_ind = 'Check Items'
+            # 1. 데이터 준비
+            data = prepare_spec_data(item_df)
+            
+            if data is None or len(data['measurements']) == 0:
+                st.warning("⚠️ 선택한 항목에 측정 데이터가 없습니다.")
             else:
-                # Single check item: Create a dummy column with the item name
-                item_name = display_df['Check Items'].iloc[0]
-                display_df[item_name] = item_name 
-                group_col_ind = item_name
-        elif group_by_ind_sel == '연도':
-            group_col_ind = '연도'
-        elif group_by_ind_sel == '분기':
-            display_df['YearQuarter'] = display_df['연도'] + '-' + display_df['분기'] + 'Q'
-            group_col_ind = 'YearQuarter'
-        elif group_by_ind_sel == '월':
-            display_df['YearMonth'] = display_df['연도'] + '-' + display_df['월']
-            group_col_ind = 'YearMonth'
+                # 2. 통계 계산
+                stats = calculate_process_capability(data, data['lsl'], data['usl'])
+                
+                # 3. 핵심 지표 표시
+                st.markdown("#### 📈 핵심 공정 지표")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    if stats['cpk'] is not None:
+                        cpk_val = stats['cpk']
+                        if cpk_val >= 1.67:
+                            delta_text = "🞢 매우우수"
+                            delta_color = "normal"
+                        elif cpk_val >= 1.33:
+                            delta_text = "🞢 우수"
+                            delta_color = "normal"
+                        elif cpk_val >= 1.0:
+                            delta_text = "🞡 양호"
+                            delta_color = "off"
+                        else:
+                            delta_text = "🔴 부적합"
+                            delta_color = "inverse"
+                        
+                        st.metric(
+                            "Cpk (공정능력)",
+                            f"{cpk_val:.2f}",
+                            delta=delta_text,
+                            delta_color=delta_color,
+                            help="Cpk >= 1.33: 우수, >= 1.0: 양호, < 1.0: 부적합"
+                        )
+                    else:
+                        st.metric("Cpk", "N/A", help="스펙 정보 없음")
+                
+                with col2:
+                    if stats['mean'] is not None:
+                        st.metric(
+                            "평균",
+                            f"{stats['mean']:.2f} {data['unit']}",
+                            help=f"측정값 평균 ({stats['n']}개 데이터)"
+                        )
+                    else:
+                        st.metric("평균", "N/A")
+                
+                with col3:
+                    if stats['std'] is not None:
+                        st.metric(
+                            "표준편차 (σ)",
+                            f"{stats['std']:.2f} {data['unit']}",
+                            help="공정 변동성 지표"
+                        )
+                    else:
+                        st.metric("표준편차", "N/A")
+                
+                with col4:
+                    if stats['margin'] is not None:
+                        margin = stats['margin']
+                        if margin > 40:
+                            delta_text = "🔵 여유 많음"
+                            delta_color = "normal"
+                        elif margin > 20:
+                            delta_text = "✅ 적정"
+                            delta_color = "normal"
+                        elif margin > 10:
+                            delta_text = "⚠️ 주의"
+                            delta_color = "off"
+                        else:
+                            delta_text = "🔴 부족"
+                            delta_color = "inverse"
+                        
+                        st.metric(
+                            "스펙 여유도",
+                            f"{margin:.1f}%",
+                            delta=delta_text,
+                            delta_color=delta_color,
+                            help="스펙 대비 공정 변동 여유 공간"
+                        )
+                    else:
+                        st.metric("스펙 여유도", "N/A")
+                
+                st.divider()
+                
+                # 4. 히스토그램 + 스펙 라인
+                st.markdown("#### 📊 측정값 분포")
+                
+                fig = create_histogram_with_specs(data, stats)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # 5. 인사이트
+                st.markdown("#### 💡 분석 결과 및 권장사항")
+                
+                insights = generate_insights(data, stats)
+                for insight in insights:
+                    st.markdown(f"- {insight}")
+                
+                # 6. 상세 통계 (Expander)
+                with st.expander("📋 상세 통계", expanded=False):
+                    col_detail1, col_detail2 = st.columns(2)
+                    
+                    with col_detail1:
+                        st.markdown("**스펙 정보**")
+                        st.json({
+                            'Check Item': data['item'],
+                            'LSL (Min)': data['lsl'],
+                            'Target (Criteria)': data['target'],
+                            'USL (Max)': data['usl'],
+                            'Unit': data['unit']
+                        })
+                    
+                    with col_detail2:
+                        st.markdown("**공정 통계**")
+                        st.json({
+                            '평균': round(stats['mean'], 4) if stats['mean'] else None,
+                            '표준편차': round(stats['std'], 4) if stats['std'] else None,
+                            'Cp': round(stats['cp'], 3) if stats['cp'] else None,
+                            'Cpk': round(stats['cpk'], 3) if stats['cpk'] else None,
+                            'CPU': round(stats['cpu'], 3) if stats['cpu'] else None,
+                            'CPL': round(stats['cpl'], 3) if stats['cpl'] else None,
+                            '스펙 여유도 (%)': round(stats['margin'], 2) if stats['margin'] else None,
+                            '불량률 (%)': round(stats['defect_rate'], 2) if stats['defect_rate'] else None,
+                            '스펙 외부 개수': stats['n_out_of_spec'],
+                            '데이터 수': stats['n'],
+                            '장비 수': data['n_equipments']
+                        })
+    # =================================================
         
-        # 그룹별 반복
-        unique_groups = display_df[group_col_ind].unique()
-        # Sort groups naturally
-        try:
-            unique_groups = sorted(unique_groups)
-        except:
-            pass
-            
-        if len(unique_groups) > 20:
-            st.warning(f"⚠️ 그룹 수가 너무 많습니다 ({len(unique_groups)}개). 상위 20개만 표시합니다.")
-            unique_groups = unique_groups[:20]
-            
-        for name in unique_groups:
-            group_data = display_df[display_df[group_col_ind] == name]
-            if group_data.empty: continue
-            
-            st.markdown(f"**{name}**")
-            try:
-                fig_individual = create_individual_chart(
-                    group_data, 
-                    group_name=str(name),
-                    equipment_col='장비명',
-                    show_violations=True,
-                    specs=specs
-                )
-                st.plotly_chart(fig_individual, use_container_width=True)
-            except Exception as e:
-                st.error(f"차트 생성 실패 ({name}): {e}")
+    with tab_equip:
+        st.subheader("🏭 장비 비교 (Equipment Comparison)")
+        st.caption("💡 장비 간 성능 차이를 분석하고, 문제 장비를 자동으로 식별합니다.")
+        
+        # Check Item 선택
+        unique_items_equip = display_df['Check Items'].unique().tolist() if 'Check Items' in display_df.columns else []
+        
+        if len(unique_items_equip) == 0:
+            st.warning("⚠️ Check Item이 없습니다.")
+        elif len(unique_items_equip) == 1:
+            selected_equip_item = unique_items_equip[0]
+            st.info(f"뵄교 항목: **{selected_equip_item}**")
+        else:
+            selected_equip_item = st.selectbox(
+                "비교 항목 선택",
+                unique_items_equip,
+                key='equip_comparison_item',
+                help="장비 간 비교할 Check Item을 선택하세요"
+            )
+        
+        if len(unique_items_equip) > 0:
+            from equipment_tab_renderer import render_equipment_comparison_content
+            render_equipment_comparison_content(display_df, selected_equip_item) 
         
     with tab3:
-        st.subheader("통계 요약 (Statistics)")
+        st.subheader("📉 통계 요약 (UCL/LCL 기반)")
         
         c1, c2 = st.columns([1, 3])
         with c1:
@@ -754,7 +1383,7 @@ def render_analysis_tab():
             st.info("통계 데이터가 없습니다.")
         
     with tab4:
-        st.subheader("필터링된 원본 데이터")
+        st.subheader("💾 필터링된 원본 데이터")
         st.dataframe(display_df, use_container_width=True)
 
 def render_data_tab():
