@@ -22,6 +22,11 @@ from utils import (
 )
 import charts  # 전체 모듈 임포트 (charts.plot_sunburst_chart 사용 위함)
 from charts import create_control_chart, create_individual_chart
+from monthly_shipment import (
+    aggregate_monthly_shipments,
+    create_monthly_shipment_chart,
+    show_shipment_stats
+)
 
 # 페이지 설정
 st.set_page_config(
@@ -1891,6 +1896,11 @@ def render_data_explorer():
     """Tab 4-2: Data Explorer with Right Sidebar Filter"""
     st.subheader("🗄️ 전체 데이터 조회 (Data Explorer)")
     
+    # === 출하 현황 요약 ===
+def render_data_explorer():
+    """Tab 4-2: Data Explorer with Right Sidebar Filter"""
+    st.subheader("🗄️ 전체 데이터 조회 (Data Explorer)")
+    
     # Layout: Main (75%) | Filter (25%)
     c_main, c_filter = st.columns([3, 1])
     
@@ -2029,13 +2039,24 @@ def render_admin_tab():
     """Tab 4: Admin (Manager) - Main Entry Point"""
     if not check_admin_login():
         return
-        
-    tab1, tab2 = st.tabs(["✅ 승인 대기", "🗄️ 전체 데이터 조회"])
+    
+    # Import modular tab renderers
+    from tabs.monthly_dashboard_tab import render_monthly_dashboard_tab
+    
+    # 3개 탭으로 분리: 승인 대기 | 월별 출하 현황 | 전체 데이터 조회
+    tab1, tab2, tab3 = st.tabs([
+        "📋 승인 대기",
+        "📊 월별 출하 현황",
+        "🗄️ 전체 데이터 조회"
+    ])
     
     with tab1:
         render_approval_queue()
-        
+    
     with tab2:
+        render_monthly_dashboard_tab()
+        
+    with tab3:
         render_data_explorer()
 
 
