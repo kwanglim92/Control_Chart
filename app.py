@@ -28,6 +28,17 @@ from monthly_shipment import (
     show_shipment_stats
 )
 
+# === Config ===
+from config import (
+    EQUIPMENT_OPTIONS,
+    get_xy_scanner_options,
+    get_head_type_options,
+    get_mod_vit_options,
+    get_sliding_stage_options,
+    get_sample_chuck_options,
+    get_ae_options
+)
+
 # 페이지 설정
 st.set_page_config(
     page_title="Control Chart Viewer v1.0",
@@ -65,90 +76,6 @@ if 'filtered_data' not in st.session_state:
 if 'analysis_triggered' not in st.session_state:
     st.session_state.analysis_triggered = False
 
-# Equipment Options (From Tkinter App)
-EQUIPMENT_OPTIONS = {
-    'xy_scanner': {
-        'Single': ['10µm', '100µm', '150µm'],
-        'Dual': ['Dual 10µm(50µm)', 'Dual 100µm(10µm)', 'Dual 100µm(150µm)', 'Dual 100µm(300mm)']
-    },
-    'head_type': {
-        'Standard': ['Standard', 'Auto Align Standard'],
-        'Long': ['Long', 'Auto Align Long'],
-        'FX': ['FX Standard'],
-        'NX-Hivac': ['NX-Hivac Auto Align'],
-        'TSH': ['TSH 50µm', 'TSH 100µm']
-    },
-    'mod_vit': {
-        'N/A': ['N/A'],
-        'Accurion': ['Accurion i4', 'Accurion i4 medium', 'Accurion Nano30', 'Accurion Vario(6units)', 'Accurion Vario(8units)'],
-        'Dual MOD': ['Dual MOD 4 units', 'Dual MOD 6 units', 'Dual MOD 7 units', 'Dual MOD 8 units'],
-        'Single MOD': ['Single MOD 2 units', 'Single MOD 6 units'],
-        'Mini450F': ['Mini450F'],
-        'Minus-K': ['Minus-K']
-    },
-    'sliding_stage': {
-        'None': ['N/A'],
-        'Stage': ['10mm', '50mm']
-    },
-    'sample_chuck': {
-        'N/A': ['N/A'],
-        'AL': ['AL Bar type chuck'],
-        'SiC': ['SiC Anti-warpage chuck', 'SiC Bar type chuck', 'SiC Flat type chuck', 
-                'SiC Fork type chuck', 'SiC Pin Bar type chuck'],
-        'Vacuum': ['Vacuum Sample Chuck'],
-        'Mask': ['Mask'],
-        'Coreflow': ['Coreflow customized']
-    },
-    'ae': {
-        'Research': ['N/A', 'AE101', 'AE201', 'AE202', 'AE203', 'AE204', 'AE401', 'AE402', 
-                     'FX200 AE', 'FX40 AE', 'Glove Box', 'Chamber'],
-        'Industrial': ['N/A', 'Double Walled', 'Isolated']
-    }
-}
-
-
-# Helper functions to get flattened options for SelectboxColumn
-def get_xy_scanner_options():
-    """Get all XY Scanner options (flattened)"""
-    options = []
-    for category, values in EQUIPMENT_OPTIONS['xy_scanner'].items():
-        options.extend(values)
-    return options
-
-def get_head_type_options():
-    """Get all Head Type options (flattened)"""
-    options = []
-    for category, values in EQUIPMENT_OPTIONS['head_type'].items():
-        options.extend(values)
-    return options
-
-def get_mod_vit_options():
-    """Get all MOD/VIT options (flattened)"""
-    options = []
-    for category, values in EQUIPMENT_OPTIONS['mod_vit'].items():
-        options.extend(values)
-    return options
-
-def get_sliding_stage_options():
-    """Get all Sliding Stage options (flattened)"""
-    options = []
-    for category, values in EQUIPMENT_OPTIONS['sliding_stage'].items():
-        options.extend(values)
-    return options
-
-def get_sample_chuck_options():
-    """Get all Sample Chuck options (flattened)"""
-    options = []
-    for category, values in EQUIPMENT_OPTIONS['sample_chuck'].items():
-        options.extend(values)
-    return options
-
-def get_ae_options():
-    """Get all AE options (flattened)"""
-    options = []
-    for category, values in EQUIPMENT_OPTIONS['ae'].items():
-        options.extend(values)
-    return options
 
 
 def sync_data_from_local():
@@ -515,61 +442,6 @@ def render_data_context_card(df):
             else:
                 summary_parts.append(f"— **불량률 {context['defect_rate']:.1f}%** 조치 필요 🔴")
         
-        st.markdown(" ".join(summary_parts))
-
-
-
-
-def check_admin_login():
-    """Returns True if admin is logged in."""
-    st.header("🔒 관리자 모드 (Admin)")
-    
-    def check_password():
-        """Returns `True` if the user had the correct password."""
-        def password_entered():
-            """Checks whether a password entered by the user is correct."""
-            import os
-            admin_password = os.getenv('ADMIN_PASSWORD')
-            
-            if admin_password is None:
-                try:
-                    admin_password = st.secrets["admin_password"]
-                except (FileNotFoundError, KeyError):
-                    admin_password = "admin123"  # Default password
-            
-            if st.session_state["password"] == admin_password:
-                st.session_state["password_correct"] = True
-                del st.session_state["password"]
-            else:
-                st.session_state["password_correct"] = False
-
-        if "password_correct" not in st.session_state:
-            st.text_input(
-                "관리자 비밀번호를 입력하세요", type="password", on_change=password_entered, key="password"
-            )
-            return False
-        elif not st.session_state["password_correct"]:
-            st.text_input(
-                "관리자 비밀번호를 입력하세요", type="password", on_change=password_entered, key="password"
-            )
-            st.error("😕 비밀번호가 틀렸습니다.")
-            return False
-        else:
-            return True
-    
-    if not check_password():
-        return False
-    
-    st.success("로그인 성공! 관리자 권한으로 접속되었습니다.")
-    return True
-
-
-def render_approval_queue():
-    """Tab 4-1: Approval Queue (Original Admin Logic)"""
-    # Login check is handled by parent function
-    
-    # Import approval utilities
-    from approval_utils import create_original_excel, create_modified_excel, compare_dataframes, compare_dicts
     
     # 승인 대기 검증 시스템
     st.subheader("📋 승인 대기 검증")
@@ -1003,17 +875,12 @@ def render_approval_queue():
                         modification_count=total_changes
                     )
                     
-                    st.warning(f"❌ {selected_row['sid']} 반려 완료.\n\n**사유**: {reject_reason}")
+                    st.warning(f"❌ {selected_row['sid']} 반려 완료.\\n\\n**사유**: {reject_reason}")
                     st.rerun()
 
 
 def render_data_explorer():
-    """Tab 4-2: Data Explorer with Right Sidebar Filter"""
-    st.subheader("🗄️ 전체 데이터 조회 (Data Explorer)")
-    
-    # === 출하 현황 요약 ===
-def render_data_explorer():
-    """Tab 4-2: Data Explorer with Right Sidebar Filter"""
+    """Tab 4-3: Data Explorer with Right Sidebar Filter"""
     st.subheader("🗄️ 전체 데이터 조회 (Data Explorer)")
     
     # Layout: Main (75%) | Filter (25%)
@@ -1062,7 +929,6 @@ def render_data_explorer():
             st.markdown(f"총 **{len(df_equipments)}**건의 데이터가 검색되었습니다.")
             
             # 장비 선택 (Selectbox)
-            # Label format: [STATUS] EquipmentName (SID)
             equip_options = {
                 f"[{row['status'].upper()}] {row['equipment_name']} ({row['sid']})": row['sid'] 
                 for _, row in df_equipments.iterrows()
@@ -1073,92 +939,36 @@ def render_data_explorer():
             if selected_equip_label:
                 selected_sid = equip_options[selected_equip_label]
                 
-                # 상세 정보 표시
                 st.divider()
                 st.markdown(f"### 📄 상세 데이터: `{selected_sid}`")
                 
-                # 장비 기본 정보 (Expander)
+                # 장비 기본 정보
                 with st.expander("ℹ️ 장비 기본 정보", expanded=False):
                     filtered_equip = df_equipments[df_equipments['sid'] == selected_sid]
                     if not filtered_equip.empty:
                         equip_info = filtered_equip.iloc[0]
                         st.json(equip_info.to_dict())
-                    else:
-                        st.warning("⚠️ 장비 정보를 찾을 수 없습니다.")
                 
-                # 원본 데이터 (Expander)
-                with st.expander("📄 원본 데이터 (Raw) - 엑셀 업로드 시 형태 그대로", expanded=False):
-                    full_data = db.get_full_measurements(selected_sid)
-                    if not full_data.empty:
-                        st.dataframe(
-                            full_data, 
-                            use_container_width=True,
-                            height=400,
-                            hide_index=True,
-                            column_config={
-                                "#": st.column_config.NumberColumn("#", width="small", help="행 번호"),
-                                "Module": st.column_config.TextColumn("Module", width="medium"),
-                                "Check Items": st.column_config.TextColumn("Check Items", width="large"),
-                                "Min": st.column_config.TextColumn("Min", width="small"),
-                                "Criteria": st.column_config.TextColumn("Criteria", width="small"),
-                                "Max": st.column_config.TextColumn("Max", width="small"),
-                                "Measurement": st.column_config.TextColumn("Measurement", width="medium"),
-                                "Unit": st.column_config.TextColumn("Unit", width="small"),
-                                "PASS/FAIL": st.column_config.TextColumn("PASS/FAIL", width="small"),
-                                "Category": st.column_config.TextColumn("Category", width="medium"),
-                                "Trend": st.column_config.TextColumn("Trend", width="small"),
-                                "Remark": st.column_config.TextColumn("Remark", width="large"),
-                            }
-                        )
-                        st.info(f"📊 총 **{len(full_data)}개** 항목 (Trend 대상 및 비대상 모두 포함)")
-                    else:
-                        st.warning("상세 측정 데이터가 없습니다.")
-                
-                # 측정 데이터 (Expander)
-                with st.expander("📊 측정 데이터 (Trend) - 트렌드 분석 대상만 필터링", expanded=True):
+                # 측정 데이터
+                with st.expander("📊 측정 데이터", expanded=True):
                     trend_data = db.get_pending_measurements(selected_sid)
                     if not trend_data.empty:
-                        # Add row number
-                        trend_data_with_num = trend_data.copy()
-                        trend_data_with_num.insert(0, '#', range(1, len(trend_data_with_num) + 1))
-                        
-                        st.dataframe(
-                            trend_data_with_num,
-                            use_container_width=True,
-                            height=400,
-                            hide_index=True,
-                            column_config={
-                                "#": st.column_config.NumberColumn("#", width="small", help="행 번호"),
-                                "id": None,
-                                "sid": None,
-                                "equipment_name": None,
-                                "status": None,
-                                "Category": st.column_config.TextColumn("Category", width="medium"),
-                                "Check Items": st.column_config.TextColumn("Check Items", width="large"),
-                                "Min": st.column_config.NumberColumn("Min", format="%.4f"),
-                                "Criteria": st.column_config.NumberColumn("Criteria", format="%.4f"),
-                                "Max": st.column_config.NumberColumn("Max", format="%.4f"),
-                                "Measurement": st.column_config.NumberColumn("Measurement", format="%.4f"),
-                                "Unit": st.column_config.TextColumn("Unit", width="small"),
-                                "PASS/FAIL": st.column_config.TextColumn("PASS/FAIL", width="small"),
-                                "Trend": st.column_config.TextColumn("Trend", width="small"),
-                                "Remark": st.column_config.TextColumn("Remark", width="large"),
-                            }
-                        )
-                        st.info(f"📊 총 **{len(trend_data)}개** Trend 분석 대상 항목")
-                    else:
-                        st.warning("Trend 분석 대상 데이터가 없습니다.")
+                        st.dataframe(trend_data, use_container_width=True, hide_index=True)
+                        st.info(f"📊 총 **{len(trend_data)}개** 항목")
 
 
 def render_admin_tab():
-    """Tab 4: Admin (Manager) - Main Entry Point"""
-    if not check_admin_login():
+    """Tab 4: Admin Mode - Main Entry Point"""
+    from modules.auth import render_admin_login
+    
+    if not render_admin_login():
         return
     
     # Import modular tab renderers
     from tabs.monthly_dashboard_tab import render_monthly_dashboard_tab
+    from tabs.approval_queue_tab import render_approval_queue_tab
     
-    # 3개 탭으로 분리: 승인 대기 | 월별 출하 현황 | 전체 데이터 조회
+    # 3개 탭으로 분리
     tab1, tab2, tab3 = st.tabs([
         "📋 승인 대기",
         "📊 월별 출하 현황",
@@ -1166,15 +976,13 @@ def render_admin_tab():
     ])
     
     with tab1:
-        render_approval_queue()
+        render_approval_queue_tab()
     
     with tab2:
         render_monthly_dashboard_tab()
         
     with tab3:
         render_data_explorer()
-
-
 
 
 
