@@ -1391,18 +1391,6 @@ def render_analysis_tab():
         st.subheader("💾 필터링된 원본 데이터")
         st.dataframe(display_df, use_container_width=True)
 
-def render_data_tab():
-    """Tab 3: Data Upload - Checklist Excel Parser"""
-    from upload_tab import render_upload_tab
-    render_upload_tab(
-        extract_func=extract_equipment_info_from_last_sheet,
-        insert_func=db.insert_equipment_from_excel,
-        sync_func=sync_data_from_local,
-        equipment_options=EQUIPMENT_OPTIONS,
-        industrial_models=INDUSTRIAL_MODELS,
-        check_status_func=db.get_equipment_status,
-        log_history_func=db.log_approval_history
-    )
 
 
 def check_admin_login():
@@ -2061,54 +2049,12 @@ def render_admin_tab():
 
 
 
-def render_guide_tab():
-    """Tab 4: User Guide"""
-    st.header("사용 가이드 (User Guide)")
-    
-    st.markdown("""
-    ### 1. 데이터 업로드 (Excel Upload)
-    본 시스템은 **사내 서버**에서 독립적으로 운영되며, 엑셀 파일 업로드 방식으로 데이터를 관리합니다.
-    
-    **[엔지니어]**
-    1. **[데이터 업로드]** 탭으로 이동합니다.
-    2. 작업 완료 후 생성된 엑셀 파일(.xlsx)을 업로드합니다.
-    3. **[데이터 제출하기]** 버튼을 클릭합니다.
-    4. 관리자 승인을 기다립니다.
-    
-    **[관리자]**
-    1. **[관리자]** 탭으로 이동합니다.
-    2. 관리자 비밀번호를 입력합니다.
-    3. 대기 중인 데이터를 검토하고 [승인] 또는 [반려]합니다.
-    4. 승인된 데이터만 대시보드에 표시됩니다.
-    
-    ---
-    
-    ### 2. 장비 현황 조회
-    전체 장비의 분포와 상세 정보를 탐색하는 메뉴입니다.
-    
-    - **Sunburst 차트**: `R/I` > `Model` > `장비명` 순서로 계층 구조를 시각화합니다. 안쪽 원을 클릭하면 하위 항목으로 줌인(Zoom-in) 됩니다.
-    - **막대 그래프**: 연구용/산업용 장비의 모델별 수량을 보여줍니다. 그래프 막대를 클릭하면 하단 목록이 해당 모델로 필터링됩니다.
-    - **상세 보기**: 목록에서 장비를 체크(✅)하면 하단에 상세 정보 탭이 열립니다. 2개 이상 선택 시 **비교표**가 생성됩니다.
-    
-    ---
-    
-    ### 3. Control Chart 분석
-    시계열 데이터의 트렌드와 이상 징후를 분석합니다.
-    
-    1. **왼쪽 사이드바**에서 분석 대상을 선택합니다.
-       - **R/I**: 용도 선택 (Research / Industrial)
-       - **Model**: 모델 선택
-       - **Check Items**: 분석할 항목 선택 (최대 2개 권장)
-       - **날짜 범위**: 분석 기간 설정 (필요 시)
-    2. **[분석 시작]** 버튼을 누릅니다.
-    3. **[Control Chart]** 탭에서 결과를 확인합니다.
-       - **UCL/LCL**: 관리 상한/하한선 (3 Sigma)
-       - **Rule of Seven**: 7점 연속 편향 시 붉은색 표시
-       - **Trend**: 7점 연속 상승/하락 시 노란색 표시
-    """)
 
 
 def main():
+    # Import modular tab renderers
+    from tabs import render_guide_tab, render_upload_tab
+    
     st.title("Control Chart Viewer v1.0")
     
     # Sidebar (Analysis Filters)
@@ -2192,7 +2138,15 @@ def main():
         render_analysis_tab()
         
     with tab_data:
-        render_data_tab()
+        render_upload_tab(
+            extract_func=extract_equipment_info_from_last_sheet,
+            insert_func=db.insert_equipment_from_excel,
+            sync_func=sync_data_from_local,
+            equipment_options=EQUIPMENT_OPTIONS,
+            industrial_models=INDUSTRIAL_MODELS,
+            check_status_func=db.get_equipment_status,
+            log_history_func=db.log_approval_history
+        )
     
     with tab_admin:
         render_admin_tab()
