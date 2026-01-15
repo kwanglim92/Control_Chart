@@ -1,16 +1,42 @@
 # Python
 __pycache__/
-*.pyc
-
-# Database
-control_chart.db
-
-# Local Data
-data.xlsx
-*.csv
-*.xlsx
+*.py[cod]
+*$py.class
+*.so
+.Python
 
 # Virtual Environment
 venv/
-.venv/
 env/
+ENV/
+
+# Database
+control_chart.db
+*.db
+*.db-journal
+
+# Streamlit
+.streamlit/secrets.toml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archive
+_archive/
+
+# Gemini artifacts (keep in local only)
+.gemini/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+~$*.xlsx
