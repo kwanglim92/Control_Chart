@@ -5,7 +5,7 @@ Monthly Shipment Analysis Module
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from utils import RESEARCH_MODELS, INDUSTRIAL_MODELS
+from .utils import RESEARCH_MODELS, INDUSTRIAL_MODELS
 
 
 def aggregate_monthly_shipments(df_equipments):

@@ -11,9 +11,12 @@ env/
 ENV/
 
 # Database
-control_chart.db
+# Database
 *.db
 *.db-journal
+data/*.db
+data/*.xlsx
+!data/samples/
 
 # Streamlit
 .streamlit/secrets.toml

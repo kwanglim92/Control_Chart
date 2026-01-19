@@ -19,9 +19,10 @@ import pandas as pd
 from datetime import datetime, date
 
 # Internal modules
-import database as db
-from utils import calculate_stats
-from charts import create_control_chart
+# Internal modules
+from modules import database as db
+from modules.utils import calculate_stats
+from modules.charts import create_control_chart
 
 
 def render_quality_analysis_tab():
@@ -365,7 +366,7 @@ def render_quality_analysis_tab():
         st.subheader("📊 스펙 분석 (Spec Analysis with Cpk)")
         st.caption("💡 공정 능력 지수(Cpk)를 자동 계산하고, 스펙 적정성을 평가합니다.")
         
-        from spec_analysis import (
+        from modules.spec_analysis import (
             prepare_spec_data,
             calculate_process_capability,
             create_histogram_with_specs,
@@ -529,28 +530,6 @@ def render_quality_analysis_tab():
         
         # Check Item 선택
         unique_items_equip = display_df['Check Items'].unique().tolist() if 'Check Items' in display_df.columns else []
-        
-        if len(unique_items_equip) == 0:
-            st.warning("⚠️ Check Item이 없습니다.")
-        elif len(unique_items_equip) == 1:
-            selected_equip_item = unique_items_equip[0]
-            st.info(f"비교 항목: **{selected_equip_item}**")
-        else:
-            selected_equip_item = st.selectbox(
-                "비교 항목 선택",
-                unique_items_equip,
-                key='equip_comparison_item',
-                help="장비 간 비교할 Check Item을 선택하세요"
-            )
-        
-        if len(unique_items_equip) > 0:
-            from equipment_tab_renderer import render_equipment_comparison_content
-            render_equipment_comparison_content(display_df, selected_equip_item) 
-        
-    with tab3:
-        st.subheader("📉 통계 요약 (UCL/LCL 기반)")
-        
-        c1, c2 = st.columns([1, 3])
         with c1:
             group_by_stat_sel = st.selectbox("그룹화 기준 (통계)", group_options, index=0, key='stat_group')
             

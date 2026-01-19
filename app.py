@@ -10,19 +10,18 @@ import os
 from datetime import datetime, date
 
 # DB 모듈 임포트
-# DB 모듈 임포트
-import database as db
+from modules import database as db
 import importlib
 importlib.reload(db) # Force reload to apply changes
 
-from utils import (
+from modules.utils import (
     load_data, clean_data, normalize_check_items_column,
     add_date_columns, build_display_map, normalize_key,
     calculate_stats, RESEARCH_MODELS, INDUSTRIAL_MODELS
 )
-import charts  # 전체 모듈 임포트 (charts.plot_sunburst_chart 사용 위함)
-from charts import create_control_chart, create_individual_chart
-from monthly_shipment import (
+from modules import charts  # 전체 모듈 임포트 (charts.plot_sunburst_chart 사용 위함)
+from modules.charts import create_control_chart, create_individual_chart
+from modules.monthly_shipment import (
     aggregate_monthly_shipments,
     create_monthly_shipment_chart,
     show_shipment_stats

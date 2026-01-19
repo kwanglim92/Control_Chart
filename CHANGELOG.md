@@ -126,6 +126,9 @@ app.py (1,099 lines) - Main entry point
 - 모든 기능 정상 작동 확인 완료
 - Import 경로 모두 업데이트 완료
 - Circular dependency 제거 완료
+- Tests 패키지 생성 (tests/__init__.py)
+- 문서화 개선 (docs/PROJECT_STRUCTURE.md)
+- Legacy 파일 정리 (archive/ 폴더로 이동)
 
 ---
 

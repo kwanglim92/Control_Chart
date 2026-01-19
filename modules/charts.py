@@ -7,7 +7,7 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Tuple
-from utils import calculate_stats, detect_rule_of_seven, detect_trend_violations, RESEARCH_MODELS, INDUSTRIAL_MODELS
+from .utils import calculate_stats, detect_rule_of_seven, detect_trend_violations, RESEARCH_MODELS, INDUSTRIAL_MODELS
 
 def create_control_chart(
     df: pd.DataFrame,

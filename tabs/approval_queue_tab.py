@@ -1,18 +1,44 @@
 """
 승인 대기 탭
 Approval Queue Tab
-
-기존 app.py의 render_approval_queue 함수를 래핑
 """
-
 import streamlit as st
+from modules import database as db
 
-
-# app.py에서 import하여 재사용
-# 나중에 완전히 분리할 수 있지만, 현재는 기존 코드를 그대로 활용
 def render_approval_queue_tab():
-    """승인 대기 탭 렌더링 - app.py의 기존 함수를 import하여 사용"""
-    # 이 함수는 app.py에서 호출되므로 app.py의 render_approval_queue를 직접 호출
-    # 순환 import 방지를 위해 지연 import 사용
-    from app import render_approval_queue
-    render_approval_queue()
+    """승인 대기 탭 렌더링"""
+    st.subheader("⏳ 승인 대기 목록")
+    
+    # DB에서 대기 중인 장비 목록 조회
+    df_pending = db.get_pending_equipments()
+    
+    if df_pending.empty:
+        st.info("현재 대기 중인 데이터가 없습니다.")
+    else:
+        st.markdown(f"총 **{len(df_pending)}**건의 대기 데이터가 있습니다.")
+        
+        for idx, row in df_pending.iterrows():
+            # Expander Title: [Date] EquipmentName (SID) - Model
+            title = f"[{row['uploaded_at']}] {row['equipment_name']} ({row['sid']}) - {row['model']}"
+            
+            with st.expander(title):
+                c1, c2, c3 = st.columns([2, 1, 1])
+                
+                with c1:
+                    st.write(f"**SID**: {row['sid']}")
+                    st.write(f"**Date**: {row['date']}")
+                    st.write(f"**R/I**: {row['ri']}")
+                    if 'xy_scanner' in row and row['xy_scanner']:
+                         st.write(f"**Scanner**: {row['xy_scanner']}")
+                
+                with c2:
+                    if st.button("승인 (Approve)", key=f"btn_app_{row['id']}", type="primary"):
+                        db.approve_equipment(row['id'])
+                        st.success("승인되었습니다.")
+                        st.rerun()
+                
+                with c3:
+                    if st.button("반려/삭제 (Reject)", key=f"btn_rej_{row['id']}", type="secondary"):
+                        db.delete_equipment(row['id'])
+                        st.warning("삭제되었습니다.")
+                        st.rerun()

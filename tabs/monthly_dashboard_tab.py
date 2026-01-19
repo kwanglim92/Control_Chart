@@ -11,13 +11,13 @@ Features:
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from monthly_shipment import (
+from modules.monthly_shipment import (
     aggregate_monthly_shipments,
     create_monthly_shipment_chart,
     show_shipment_stats
 )
-from utils import RESEARCH_MODELS, INDUSTRIAL_MODELS
-import database as db
+from modules.utils import RESEARCH_MODELS, INDUSTRIAL_MODELS
+from modules import database as db
 
 
 def render_monthly_dashboard_tab():

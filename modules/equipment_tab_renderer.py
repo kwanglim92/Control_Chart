@@ -3,8 +3,8 @@ Equipment Comparison Tab Renderer
 장비 비교 탭 렌더링 함수
 """
 import streamlit as st
-from spec_analysis import prepare_spec_data
-from equipment_comparison import (
+from .spec_analysis import prepare_spec_data
+from .equipment_comparison import (
     create_equipment_comparison_table,
     create_equipment_boxplot,
     detect_outlier_equipments
@@ -113,7 +113,7 @@ def render_equipment_comparison_content(display_df, selected_equip_item):
         st.caption("💡 Scanner, Head Type 등 구성 요소별 성능 차이를 확인하세요")
         st.caption("⚙️ 장비 구매나 업그레이드 시 데이터 기반 의사결정에 활용할 수 있습니다")
         
-        from configuration_analysis import (
+        from .configuration_analysis import (
             analyze_by_configuration,
             generate_configuration_insights,
             get_configuration_summary

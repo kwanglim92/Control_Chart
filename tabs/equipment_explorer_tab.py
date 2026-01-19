@@ -14,8 +14,8 @@ Features:
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import database as db
-import charts
+from modules import database as db
+from modules import charts
 
 
 def render_equipment_explorer_tab():
