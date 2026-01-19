@@ -8,7 +8,7 @@ import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-DB_FILE = "control_chart.db"
+DB_FILE = "data/control_chart.db"
 
 def init_db():
     """Initialize the database with normalized tables."""

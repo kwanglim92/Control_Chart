@@ -52,7 +52,7 @@ if 'db_initialized' not in st.session_state:
     st.session_state.db_initialized = True
     
     # 앱 시작 시 자동으로 로컬 data.xlsx 로드 시도
-    data_file_path = os.path.join(os.path.dirname(__file__), 'data.xlsx')
+    data_file_path = os.path.join(os.path.dirname(__file__), 'data', 'data.xlsx')
     if os.path.exists(data_file_path):
         try:
             # Read all 3 sheets
@@ -79,7 +79,7 @@ if 'analysis_triggered' not in st.session_state:
 
 def sync_data_from_local():
     """로컬 Excel 파일(data.xlsx)에서 데이터를 읽어 DB에 저장 (승인 상태로)"""
-    data_file_path = os.path.join(os.path.dirname(__file__), 'data.xlsx')
+    data_file_path = os.path.join(os.path.dirname(__file__), 'data', 'data.xlsx')
     if not os.path.exists(data_file_path):
         st.error("⚠️ 'data.xlsx' 파일을 찾을 수 없습니다.")
         st.info("프로젝트 루트에 'data.xlsx' 파일을 배치해주세요.")

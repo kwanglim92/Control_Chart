@@ -349,7 +349,7 @@ def render_upload_tab(extract_func, insert_func, sync_func, equipment_options, i
     with st.expander("🔧 관리자: 로컬 파일 동기화"):
         st.info("""
         **관리자 전용**  
-        프로젝트 루트의 `data.xlsx` 파일을 읽어 데이터를 갱신합니다.  
+        프로젝트 `data/data.xlsx` 파일을 읽어 데이터를 갱신합니다.  
         이 방식으로 로드된 데이터는 **즉시 승인 상태**로 대시보드에 표시됩니다.
         """)
         
