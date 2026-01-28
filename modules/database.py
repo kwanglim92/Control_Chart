@@ -671,10 +671,30 @@ def get_pending_equipments() -> pd.DataFrame:
     return df
 
 def approve_equipment(equip_id: int):
-    """Approve an equipment by ID."""
+    """
+    Approve an equipment by ID.
+    Also syncs denormalized columns in measurements table.
+    """
     conn = get_connection()
     c = conn.cursor()
+    
+    # 1. Get equipment info for denormalized sync
+    c.execute("SELECT sid, equipment_name FROM equipments WHERE id = ?", (equip_id,))
+    equip = c.fetchone()
+    sid, equip_name = equip if equip else (None, None)
+    
+    # 2. Update equipment status
     c.execute("UPDATE equipments SET status = 'approved' WHERE id = ?", (equip_id,))
+    
+    # 3. Sync denormalized columns in measurements table
+    c.execute("""
+        UPDATE measurements 
+        SET status = 'approved',
+            sid = ?,
+            equipment_name = ?
+        WHERE equipment_id = ?
+    """, (sid, equip_name, equip_id))
+    
     conn.commit()
     conn.close()
 
@@ -1000,6 +1020,102 @@ def clear_all_data():
     conn.commit()
     conn.close()
 
+def sync_denormalized_columns():
+    """
+    Phase 1: Sync denormalized columns in measurements table.
+    Updates equipment_name, sid, and status based on equipments table.
+    Returns count of updated rows.
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    
+    updated_counts = {
+        'equipment_name': 0,
+        'sid': 0,
+        'status': 0
+    }
+    
+    # 1. Sync equipment_name
+    c.execute("""
+        UPDATE measurements 
+        SET equipment_name = (
+            SELECT e.equipment_name 
+            FROM equipments e 
+            WHERE e.id = measurements.equipment_id
+        )
+        WHERE equipment_id IS NOT NULL
+          AND (equipment_name IS NULL OR equipment_name = '')
+    """)
+    updated_counts['equipment_name'] = c.rowcount
+    
+    # 2. Sync sid
+    c.execute("""
+        UPDATE measurements 
+        SET sid = (
+            SELECT e.sid 
+            FROM equipments e 
+            WHERE e.id = measurements.equipment_id
+        )
+        WHERE equipment_id IS NOT NULL
+          AND (sid IS NULL OR sid = '')
+    """)
+    updated_counts['sid'] = c.rowcount
+    
+    # 3. Sync status for approved equipments
+    c.execute("""
+        UPDATE measurements 
+        SET status = 'approved'
+        WHERE equipment_id IN (
+            SELECT id FROM equipments WHERE status = 'approved'
+        )
+        AND status != 'approved'
+    """)
+    updated_counts['status'] = c.rowcount
+    
+    conn.commit()
+    conn.close()
+    
+    return updated_counts
+
+def get_migration_status():
+    """
+    Get current data consistency status.
+    Returns counts of NULL values in denormalized columns.
+    """
+    conn = get_connection()
+    
+    # Count NULL equipment_name
+    null_name = pd.read_sql_query("""
+        SELECT COUNT(*) as cnt FROM measurements 
+        WHERE equipment_name IS NULL AND equipment_id IS NOT NULL
+    """, conn)['cnt'].iloc[0]
+    
+    # Count NULL sid
+    null_sid = pd.read_sql_query("""
+        SELECT COUNT(*) as cnt FROM measurements 
+        WHERE sid IS NULL AND equipment_id IS NOT NULL
+    """, conn)['cnt'].iloc[0]
+    
+    # Count mismatched status
+    mismatched_status = pd.read_sql_query("""
+        SELECT COUNT(*) as cnt FROM measurements m
+        JOIN equipments e ON m.equipment_id = e.id
+        WHERE e.status = 'approved' AND m.status != 'approved'
+    """, conn)['cnt'].iloc[0]
+    
+    # Total measurements
+    total = pd.read_sql_query("SELECT COUNT(*) as cnt FROM measurements", conn)['cnt'].iloc[0]
+    
+    conn.close()
+    
+    return {
+        'total_measurements': total,
+        'null_equipment_name': null_name,
+        'null_sid': null_sid,
+        'mismatched_status': mismatched_status
+    }
+
+
 def get_equipment_stats() -> Dict[str, Any]:
     """Get equipment statistics for dashboard."""
     conn = get_connection()
@@ -1109,7 +1225,7 @@ def update_equipment(equip_id: int, updates: Dict[str, Any]) -> bool:
     
     # Filter out invalid columns to prevent SQL injection or errors
     valid_columns = [
-        'equipment_name', 'ri', 'model', 'xy_scanner', 'head_type', 
+        'sid', 'equipment_name', 'ri', 'model', 'xy_scanner', 'head_type', 
         'mod_vit', 'sliding_stage', 'sample_chuck', 'ae', 'date', 'status',
         'end_user', 'mfg_engineer', 'qc_engineer', 'reference_doc'
     ]

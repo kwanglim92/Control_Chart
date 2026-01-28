@@ -7,6 +7,8 @@ services:
     volumes:
       # Persist the SQLite database
       - ./control_chart.db:/app/control_chart.db
+      # Mount source code for hot-reloading (No rebuild needed for code changes)
+      - ./:/app
     restart: always
     environment:
       - TZ=Asia/Seoul # Set timezone
