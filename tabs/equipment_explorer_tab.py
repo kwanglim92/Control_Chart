@@ -237,10 +237,12 @@ def render_equipment_explorer_tab():
                 with tabs[i]:
                     equip_info = df_equip[df_equip['equipment_name'] == equip_name].iloc[0]
                     with st.container(border=True):
+                        # Layout: Header (Left) and Body (Right-ish)
                         c_head, c_body = st.columns([1, 3])
+                        
+                        # --- HEADER SECTION (Title) ---
                         with c_head:
                             st.markdown(f"## 🏷️")
-                            
                             # SID Display
                             sid_val = equip_info.get('sid')
                             sid_str = str(sid_val) if pd.notna(sid_val) and str(sid_val).strip() != '' else ''
@@ -250,8 +252,10 @@ def render_equipment_explorer_tab():
                             st.markdown(f"**{equip_info['equipment_name']}**")
                             st.caption(f"{equip_info['ri']} | {equip_info['model']}")
                             st.caption(f"📅 {equip_info['date'].strftime('%Y-%m-%d')}")
-                            
+
+                        # --- BODY SECTION (Specs) ---
                         with c_body:
+                            # === VIEW MODE (Read-only) ===
                             c1, c2, c3 = st.columns(3)
                             with c1:
                                 st.markdown("**기본 사양**")
@@ -261,12 +265,26 @@ def render_equipment_explorer_tab():
                                 st.markdown("**옵션 사양**")
                                 st.write(f"Sliding Stage: `{equip_info['sliding_stage']}`")
                                 st.write(f"Chuck: `{equip_info['sample_chuck']}`")
-                            with c3:
-                                st.markdown("**기타**")
                                 st.write(f"AE: `{equip_info['ae']}`")
                                 st.write(f"Mod/Vit: `{equip_info['mod_vit']}`")
+                            
+                            st.markdown("---")
+                            # Additional Project Info
+                            c4, c5, c6, c7 = st.columns(4)
+                            with c4:
+                                st.markdown("**Customer**")
+                                st.write(f"{equip_info.get('end_user') or '-'}")
+                            with c5:
+                                st.markdown("**Mfg Engineer**")
+                                st.write(f"{equip_info.get('mfg_engineer') or '-'}")
+                            with c6:
+                                st.markdown("**QC Engineer**")
+                                st.write(f"{equip_info.get('qc_engineer') or '-'}")
+                            with c7:
+                                st.markdown("**Checklist**")
+                                st.write(f"{equip_info.get('reference_doc') or '-'}")
                         
-                        # 상세 측정 데이터 (Full Data View)
+                        # Full Data View (Below header/body split)
                         st.divider()
                         with st.expander("📋 상세 측정 데이터 (Full Data View)", expanded=False):
                             if sid_str:

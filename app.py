@@ -63,9 +63,13 @@ if 'db_initialized' not in st.session_state:
             except:
                 df_specs = None
             
-            # Use sync_relational_data which sets status='approved' by default
-            result = db.sync_relational_data(df_equip, df_meas, df_specs)
-            st.session_state.auto_load_msg = f"✅ 로컬 데이터 자동 로드 완료 (장비: {result['equipments']}대, 측정값: {result['measurements']}건)"
+            # Check if DB is already populated to avoid overwriting pending data
+            if db.get_equipment_count() == 0:
+                # Use sync_relational_data which sets status='approved' by default
+                result = db.sync_relational_data(df_equip, df_meas, df_specs)
+                st.session_state.auto_load_msg = f"✅ 로컬 데이터 자동 로드 완료 (장비: {result['equipments']}대, 측정값: {result['measurements']}건)"
+            else:
+                st.session_state.auto_load_msg = "✅ 기존 데이터베이스 유지됨 (초기화 건너뜀)"
         except Exception as e:
             st.session_state.auto_load_msg = f"⚠️ 자동 로드 실패: {str(e)}"
 
@@ -442,440 +446,6 @@ def render_data_context_card(df):
                 summary_parts.append(f"— **불량률 {context['defect_rate']:.1f}%** 조치 필요 🔴")
         
     
-    # 승인 대기 검증 시스템
-    st.subheader("📋 승인 대기 검증")
-    
-    df_pending = db.get_pending_equipments()
-    
-    if df_pending.empty:
-        st.info("현재 대기 중인 데이터가 없습니다.")
-        return
-    
-    st.markdown(f"총 **{len(df_pending)}**건의 대기 데이터가 있습니다.")
-    
-    # Step 1: SID 선택
-    st.markdown("### 🔍 Step 1: 검증할 장비 선택")
-    
-    # SID 옵션 생성 (날짜 + SID + 장비명 + Model)
-    sid_options = {}
-    for idx, row in df_pending.iterrows():
-        label = f"[{row['uploaded_at']}] {row['equipment_name']} ({row['sid']}) - {row['model']}"
-        sid_options[label] = row['id']
-    
-    selected_label = st.selectbox(
-        "SID 선택",
-        options=list(sid_options.keys()),
-        key="selected_sid_label"
-    )
-    
-    if not selected_label:
-        return
-    
-    equipment_id = sid_options[selected_label]
-    
-    # 선택된 장비 정보 로딩
-    selected_row = df_pending[df_pending['id'] == equipment_id].iloc[0]
-    
-    # Equipment 데이터 로딩 (딕셔너리 형태)
-    equipment_data = {
-        'id': selected_row['id'],
-        'SID': selected_row['sid'],
-        '장비명': selected_row['equipment_name'],
-        '종료일': selected_row['date'],
-        'R/I': selected_row['ri'],
-        'Model': selected_row['model'],
-        'XY Scanner': selected_row['xy_scanner'],
-        'Head Type': selected_row['head_type'],
-        'MOD/VIT': selected_row['mod_vit'],
-        'Sliding Stage': selected_row['sliding_stage'],
-        'Sample Chuck': selected_row['sample_chuck'],
-        'AE': selected_row['ae'],
-        'End User': selected_row['end_user'],
-        'Mfg Engineer': selected_row['mfg_engineer'],
-        'QC Engineer': selected_row['qc_engineer'],
-        'Reference Doc': selected_row['reference_doc']
-    }
-    
-    # Measurements 데이터 로딩
-    # 1. 먼저 Staging 테이블(pending_measurements)에서 조회 (Full Columns)
-    measurements_data = db.get_pending_measurements(selected_row['sid'])
-    
-    # 2. 없으면 기존 방식(measurements 테이블)으로 조회 (Legacy Support)
-    # 2. 없으면 기존 방식(measurements 테이블)으로 조회 (Legacy Support)
-    if measurements_data.empty:
-        measurements_data = db.get_measurements_by_sid(selected_row['sid'], status='pending')
-    else:
-        # 컬럼 순서 재배치 (UI 일관성: 업로드 탭과 유사하게)
-        # Category, Check Items, Min, Criteria, Max, Measurement, Unit, PASS/FAIL, Trend, Remark
-        desired_order = [
-            'Category', 'Check Items', 'Min', 'Criteria', 'Max', 
-            'Measurement', 'Unit', 'PASS/FAIL', 'Trend', 'Remark', 
-            'status', 'sid', 'equipment_name', 'id' # 숨겨진 컬럼들
-        ]
-        # 존재하는 컬럼만 선택하여 순서 적용
-        existing_cols = [col for col in desired_order if col in measurements_data.columns]
-        # 나머지 컬럼들도 뒤에 붙임
-        remaining_cols = [col for col in measurements_data.columns if col not in existing_cols]
-        measurements_data = measurements_data[existing_cols + remaining_cols]
-    
-    # 이전 반려 이력 확인
-    previous_rejections = db.check_previous_rejections(selected_row['sid'])
-    
-    if not previous_rejections.empty:
-        # 재제출 여부 확인
-        if db.is_resubmitted(selected_row['sid']):
-            st.info(f"🔄 **재제출됨**: 이 장비는 반려 후 수정되어 다시 제출되었습니다.")
-            
-        st.warning(f"⚠️ 이 장비({selected_row['sid']})는 **{len(previous_rejections)}번** 반려된 이력이 있습니다!")
-        
-        with st.expander("📜 이전 반려 이력 보기"):
-            for idx, row in previous_rejections.iterrows():
-                admin_str = f"관리자: {row['admin_name']}" if pd.notna(row['admin_name']) and row['admin_name'] else "관리자: 미기록"
-                st.markdown(f"""
-                **{idx + 1}. [{row['timestamp']}] 반려**
-                - {admin_str}
-                - 사유: {row['reason'] if pd.notna(row['reason']) else '(사유 없음)'}
-                - 수정 항목: {row['modification_count']}건
-                """)
-    
-    st.divider()
-    
-    # Step 2: 데이터 검증 및 수정
-    st.markdown("### ✏️ Step 2: 데이터 검증 및 수정")
-    
-    tab1, tab_raw, tab3, tab4 = st.tabs([
-        "ℹ️ 장비 정보", 
-        "� 원본 데이터 (Raw)", 
-        "�📊 측정 데이터 (Trend)", 
-        "📝 수정 사항"
-    ])
-    
-    with tab1:
-        st.markdown("**장비 정보 (편집 가능)**")
-        st.caption("🔒 SID, Model, 종료일은 수정할 수 없습니다.")
-        
-        # DataFrame으로 변환(편집용)
-        df_equipment = pd.DataFrame([equipment_data])
-        
-        # Equipment 편집기
-        edited_equipment_df = st.data_editor(
-            df_equipment,
-            disabled=['id', 'SID', 'Model', '종료일'],  # 읽기 전용
-            column_config={
-                'id': None,  # 숨김
-                'SID': st.column_config.TextColumn('SID', disabled=True),
-                '장비명': st.column_config.TextColumn('장비명'),
-                '종료일': st.column_config.TextColumn('종료일', disabled=True),
-                'R/I': st.column_config.SelectboxColumn(
-                    'R/I',
-                    options=['Research', 'Industrial'],
-                    required=True
-                ),
-                'Model': st.column_config.TextColumn('Model', disabled=True),
-                'XY Scanner': st.column_config.SelectboxColumn(
-                    'XY Scanner',
-                    options=get_xy_scanner_options(),
-                    required=True
-                ),
-                'Head Type': st.column_config.SelectboxColumn(
-                    'Head Type',
-                    options=get_head_type_options(),
-                    required=True
-                ),
-                'MOD/VIT': st.column_config.SelectboxColumn(
-                    'MOD/VIT',
-                    options=get_mod_vit_options(),
-                    required=True
-                ),
-                'Sliding Stage': st.column_config.SelectboxColumn(
-                    'Sliding Stage',
-                    options=get_sliding_stage_options(),
-                    required=True
-                ),
-                'Sample Chuck': st.column_config.SelectboxColumn(
-                    'Sample Chuck',
-                    options=get_sample_chuck_options(),
-                    required=True
-                ),
-                'AE': st.column_config.SelectboxColumn(
-                    'AE',
-                    options=get_ae_options(),
-                    required=True
-                ),
-                'End User': st.column_config.TextColumn('End User'),
-                'Mfg Engineer': st.column_config.TextColumn('Mfg Engineer'),
-                'QC Engineer': st.column_config.TextColumn('QC Engineer'),
-                'Reference Doc': st.column_config.TextColumn('Reference Doc'),
-            },
-            use_container_width=True,
-            hide_index=True,
-            key=f"equipment_editor_{equipment_id}"
-        )
-        
-        # 수정된 데이터를 딕셔너리로 변환
-        edited_equipment_data = edited_equipment_df.iloc[0].to_dict()
-    
-    with tab_raw:
-        st.markdown("**원본 데이터 (Read-only)**")
-        st.caption("💡 업로드된 엑셀의 모든 컬럼 정보입니다. 이력 관리를 위해 보존됩니다.")
-        
-        # Get full measurements data from pending_measurements table
-        full_raw_data = db.get_full_measurements(selected_row['sid'])
-        
-        if not full_raw_data.empty:
-            st.markdown("##### 📄 엑셀 원본 데이터 (업로드 시 형태 그대로)")
-            st.dataframe(
-                full_raw_data,
-                use_container_width=True,
-                height=500,
-                hide_index=True,
-                column_config={
-                    "#": st.column_config.NumberColumn("#", width="small", help="행 번호"),
-                    "Module": st.column_config.TextColumn("Module", width="medium"),
-                    "Check Items": st.column_config.TextColumn("Check Items", width="large"),
-                    "Min": st.column_config.TextColumn("Min", width="small"),
-                    "Criteria": st.column_config.TextColumn("Criteria", width="small"),
-                    "Max": st.column_config.TextColumn("Max", width="small"),
-                    "Measurement": st.column_config.TextColumn("Measurement", width="medium"),
-                    "Unit": st.column_config.TextColumn("Unit", width="small"),
-                    "PASS/FAIL": st.column_config.TextColumn("PASS/FAIL", width="small"),
-                    "Category": st.column_config.TextColumn("Category", width="medium"),
-                    "Trend": st.column_config.TextColumn("Trend", width="small"),
-                    "Remark": st.column_config.TextColumn("Remark", width="large"),
-                }
-            )
-            st.info(f"📊 총 **{len(full_raw_data)}개** 항목 (Trend 대상 및 비대상 모두 포함)")
-        else:
-            st.warning("⚠️ 원본 데이터가 보관되어 있지 않습니다. (이전 데이터는 상세 정보가 없을 수 있습니다)")
-    
-    with tab3:
-        st.markdown("**측정 데이터 (Value 편집 가능)**")
-        st.caption("⚠️ 측정값 수정은 신중히 진행하세요. 원본 엑셀 파일과 크로스체크 필요합니다.")
-        
-        # 초기화 카운터 초기화
-        if f'reset_counter_{equipment_id}' not in st.session_state:
-            st.session_state[f'reset_counter_{equipment_id}'] = 0
-        
-        # Measurements 편집기 (동적 key 사용)
-        edited_measurements = st.data_editor(
-            measurements_data,
-            disabled=['sid', 'check_items', 'equipment_name', 'Category', 'Check Items', 'Min', 'Criteria', 'Max', 'Unit', 'PASS/FAIL', 'Trend', 'Remark'],  # Measurement 제외하고 모두 읽기 전용
-            column_config={
-                'id': None,
-                'sid': None,
-                'equipment_name': None,
-                'status': None,
-                'Category': st.column_config.TextColumn('Category', disabled=True),
-                'Check Items': st.column_config.TextColumn('Check Items', disabled=True),
-                'Min': st.column_config.NumberColumn('Min', disabled=True, format="%.4f"),
-                'Criteria': st.column_config.NumberColumn('Criteria', disabled=True, format="%.4f"),
-                'Max': st.column_config.NumberColumn('Max', disabled=True, format="%.4f"),
-                'Measurement': st.column_config.NumberColumn(
-                    'Measurement',
-                    help="측정값 (편집 가능)",
-                    format="%.4f",
-                    required=True
-                ),
-                'Unit': st.column_config.TextColumn('Unit', disabled=True),
-                'PASS/FAIL': st.column_config.TextColumn('PASS/FAIL', disabled=True),
-                'Trend': st.column_config.TextColumn('Trend', disabled=True),
-                'Remark': st.column_config.TextColumn('Remark', disabled=True),
-                
-                # Legacy compatibility (for old data)
-                'check_items': st.column_config.TextColumn('Check Items', disabled=True),
-                'value': st.column_config.NumberColumn('Measurement', format="%.4f", required=True),
-            },
-            use_container_width=True,
-            height=400,
-            key=f"measurements_editor_{equipment_id}_{st.session_state[f'reset_counter_{equipment_id}']}"
-        )
-        
-        # 하단 정보 및 초기화 버튼 (병렬 배치)
-        col_info, col_btn = st.columns([4, 1])
-        with col_info:
-            st.info(f"📊 총 **{len(edited_measurements)}개** 측정 항목")
-        with col_btn:
-            if st.button("🔄 원본으로 초기화", key=f"reset_btn_{equipment_id}", use_container_width=True):
-                st.session_state[f'reset_counter_{equipment_id}'] += 1
-                st.rerun()
-    
-    with tab4:
-        st.markdown("**변경 사항 요약**")
-        
-        # Equipment 변경사항
-        eq_changes = compare_dicts(equipment_data, edited_equipment_data)
-        
-        # Measurements 변경사항
-        meas_changes = compare_dataframes(measurements_data, edited_measurements)
-        
-        total_changes = len(eq_changes) + len(meas_changes)
-        
-        if total_changes == 0:
-            st.success("✅ 변경된 항목이 없습니다.")
-        else:
-            st.warning(f"⚠️ 총 **{total_changes}**개 항목이 수정되었습니다!")
-            
-            if eq_changes:
-                st.markdown("**📄 장비 정보 변경사항:**")
-                df_eq_changes = pd.DataFrame(eq_changes)
-                st.dataframe(df_eq_changes, use_container_width=True)
-            
-            if meas_changes:
-                st.markdown("**📊 측정 데이터 변경사항:**")
-                df_meas_changes = pd.DataFrame(meas_changes)
-                st.dataframe(df_meas_changes, use_container_width=True)
-    
-    st.divider()
-    
-    # Step 3: 최종 확인 및 조치
-    st.markdown("### ✅ Step 3: 최종 확인 및 조치")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("**� 엑셀 다운로드**")
-        
-        # 원본 데이터 다운로드
-        original_excel = create_original_excel(equipment_data, measurements_data)
-        st.download_button(
-            label="📥 원본 데이터 다운로드",
-            data=original_excel,
-            file_name=f"original_{selected_row['sid']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-        
-        # 수정본 다운로드 (변경사항이 있을 때만)
-        if total_changes > 0:
-            modified_excel = create_modified_excel(
-                equipment_data, edited_equipment_data,
-                measurements_data, edited_measurements
-            )
-            st.download_button(
-                label="📥 수정본 다운로드 (변경 이력 포함) ⭐",
-                data=modified_excel,
-                file_name=f"modified_{selected_row['sid']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                type="primary"
-            )
-    
-    with col2:
-        st.markdown("**👤 관리자 정보 (선택사항)**")
-        admin_name = st.text_input("관리자 이름", placeholder="예: 홍길동", key=f"admin_name_{equipment_id}")
-    
-    st.divider()
-    
-    # 승인/반려 버튼
-    col_approve, col_reject = st.columns(2)
-    
-    with col_approve:
-        if st.button("✅ 승인 (수정사항 반영)", type="primary", use_container_width=True, key=f"approve_{equipment_id}"):
-            # 수정된 데이터로 DB 업데이트
-            # Equipment 업데이트
-            update_data = {
-                'equipment_name': edited_equipment_data['장비명'],
-                'ri': edited_equipment_data['R/I'],
-                'xy_scanner': edited_equipment_data['XY Scanner'],
-                'head_type': edited_equipment_data['Head Type'],
-                'mod_vit': edited_equipment_data['MOD/VIT'],
-                'sliding_stage': edited_equipment_data['Sliding Stage'],
-                'sample_chuck': edited_equipment_data['Sample Chuck'],
-                'ae': edited_equipment_data['AE'],
-                'end_user': edited_equipment_data['End User'],
-                'mfg_engineer': edited_equipment_data['Mfg Engineer'],
-                'qc_engineer': edited_equipment_data['QC Engineer'],
-                'reference_doc': edited_equipment_data['Reference Doc']
-            }
-            
-            # DB 업데이트
-            conn = db.get_connection()
-            cursor = conn.cursor()
-            
-            # Equipment 업데이트
-            cursor.execute("""
-                UPDATE equipments
-                SET equipment_name=?, ri=?, xy_scanner=?, head_type=?, mod_vit=?,
-                    sliding_stage=?, sample_chuck=?, ae=?, end_user=?,
-                    mfg_engineer=?, qc_engineer=?, reference_doc=?, status='approved'
-                WHERE id=?
-            """, (
-                update_data['equipment_name'], update_data['ri'], update_data['xy_scanner'],
-                update_data['head_type'], update_data['mod_vit'], update_data['sliding_stage'],
-                update_data['sample_chuck'], update_data['ae'], update_data['end_user'],
-                update_data['mfg_engineer'], update_data['qc_engineer'], update_data['reference_doc'],
-                equipment_id
-            ))
-            
-            # Measurements 업데이트
-            for idx, row in edited_measurements.iterrows():
-                # 컬럼명 호환성 처리
-                val = row.get('Measurement') if 'Measurement' in row else row.get('value')
-                check_item = row.get('Check Items') if 'Check Items' in row else row.get('check_items')
-                
-                # 1. pending_measurements 업데이트 (Staging)
-                cursor.execute("""
-                    UPDATE pending_measurements
-                    SET value=?, status='approved'
-                    WHERE sid=? AND check_items=? AND status='pending'
-                """, (val, selected_row['sid'], check_item))
-                
-                # 2. measurements 테이블 업데이트 (Production)
-                cursor.execute("""
-                    UPDATE measurements
-                    SET value=?, status='approved'
-                    WHERE sid=? AND check_items=? AND status='pending'
-                """, (val, selected_row['sid'], check_item))
-            
-            conn.commit()
-            conn.close()
-            
-            # 승인 이력 기록
-            db.log_approval_history(
-                sid=selected_row['sid'],
-                equipment_id=equipment_id,
-                action='approved',
-                admin_name=admin_name if admin_name else None,
-                reason=f"승인 완료 (수정 {total_changes}건)" if total_changes > 0 else "승인 완료",
-                previous_status='pending',
-                new_status='approved',
-                modification_count=total_changes
-            )
-            
-            st.success(f"✅ {selected_row['sid']} 승인 완료! (수정사항 {total_changes}건 반영)")
-            st.balloons()
-            st.rerun()
-    
-    with col_reject:
-        with st.expander("❌ 반려하기"):
-            st.caption("반려 사유를 입력하고 '반려 확정' 버튼을 클릭하세요.")
-            reject_reason = st.text_area(
-                "반려 사유 (필수)",
-                placeholder="예: Z Detector offset 측정값 이상 (예상 범위: 200±20, 실측: 81.2938)\n재측정 후 재제출 요청",
-                key=f"reject_reason_{equipment_id}"
-            )
-            
-            if st.button("❌ 반려 확정", type="secondary", use_container_width=True, key=f"reject_confirm_{equipment_id}"):
-                if not reject_reason or reject_reason.strip() == "":
-                    st.error("⚠️ 반려 사유를 입력해주세요!")
-                else:
-                    # 반려 처리 (상태 변경)
-                    db.reject_equipment(equipment_id, reason=reject_reason, admin_name=admin_name)
-                    
-                    # 반려 이력 기록
-                    db.log_approval_history(
-                        sid=selected_row['sid'],
-                        equipment_id=equipment_id,
-                        action='rejected',
-                        admin_name=admin_name if admin_name else None,
-                        reason=reject_reason,
-                        previous_status='pending',
-                        new_status='rejected',
-                        modification_count=total_changes
-                    )
-                    
-                    st.warning(f"❌ {selected_row['sid']} 반려 완료.\\n\\n**사유**: {reject_reason}")
-                    st.rerun()
 
 
 def render_data_explorer():
@@ -921,6 +491,7 @@ def render_data_explorer():
     df_equipments = db.get_all_equipments(filters)
     
     # --- Main Content ---
+    # --- Main Content ---
     with c_main:
         if df_equipments.empty:
             st.info("조건에 맞는 데이터가 없습니다.")
@@ -942,18 +513,163 @@ def render_data_explorer():
                 st.markdown(f"### 📄 상세 데이터: `{selected_sid}`")
                 
                 # 장비 기본 정보
-                with st.expander("ℹ️ 장비 기본 정보", expanded=False):
+                with st.expander("ℹ️ 장비 기본 정보 (편집 가능)", expanded=False):
                     filtered_equip = df_equipments[df_equipments['sid'] == selected_sid]
                     if not filtered_equip.empty:
-                        equip_info = filtered_equip.iloc[0]
-                        st.json(equip_info.to_dict())
-                
+                        equip_info = filtered_equip.iloc[0].to_dict()
+                        
+                        # 편집 모드 토글
+                        edit_eq_key = f"edit_eq_{equip_info['id']}"
+                        if edit_eq_key not in st.session_state:
+                            st.session_state[edit_eq_key] = False
+                            
+                        c_title, c_edit = st.columns([4, 1])
+                        with c_title:
+                            st.subheader(f"{equip_info['equipment_name']}")
+                        with c_edit:
+                            if st.button("✏️ 정보 수정", key=f"btn_eq_{equip_info['id']}"):
+                                st.session_state[edit_eq_key] = not st.session_state[edit_eq_key]
+                        
+                        if st.session_state[edit_eq_key]:
+                            # --- EDIT MODE ---
+                            # 확장된 필드들 제공
+                            new_eq_name = st.text_input("장비명", equip_info['equipment_name'], key=f"in_eq_name_{equip_info['id']}")
+                            
+                            col_e1, col_e2 = st.columns(2)
+                            with col_e1:
+                                new_ri = st.selectbox("R/I", ['Research', 'Industrial'], index=0 if equip_info['ri'] == 'Research' else 1, key=f"in_eq_ri_{equip_info['id']}")
+                                new_scanner = st.selectbox("XY Scanner", get_xy_scanner_options(), index=0 if not equip_info['xy_scanner'] else None, key=f"in_eq_sc_{equip_info['id']}")
+                                new_head = st.selectbox("Head Type", get_head_type_options(), index=0 if not equip_info['head_type'] else None, key=f"in_eq_hd_{equip_info['id']}")
+                            
+                            with col_e2:
+                                new_mod = st.selectbox("MOD/VIT", get_mod_vit_options(), index=0 if not equip_info['mod_vit'] else None, key=f"in_eq_mv_{equip_info['id']}")
+                                new_stage = st.selectbox("Sliding Stage", get_sliding_stage_options(), key=f"in_eq_ss_{equip_info['id']}")
+                                new_chuck = st.selectbox("Sample Chuck", get_sample_chuck_options(), key=f"in_eq_sc2_{equip_info['id']}")
+                            
+                            new_ae = st.selectbox("AE", get_ae_options(), key=f"in_eq_ae_{equip_info['id']}")
+                            
+                            st.markdown("---")
+                            st.markdown("**추가 정보**")
+                            col_a1, col_a2 = st.columns(2)
+                            with col_a1:
+                                new_end_user = st.text_input("End User", equip_info.get('end_user') or "", key=f"in_eq_eu_{equip_info['id']}")
+                                new_mfg = st.text_input("Mfg Engineer", equip_info.get('mfg_engineer') or "", key=f"in_eq_mfg_{equip_info['id']}")
+                            with col_a2:
+                                new_qc = st.text_input("QC Engineer", equip_info.get('qc_engineer') or "", key=f"in_eq_qc_{equip_info['id']}")
+                                new_ref = st.text_input("Ref Doc", equip_info.get('reference_doc') or "", key=f"in_eq_ref_{equip_info['id']}")
+
+                            if st.button("💾 저장", key=f"save_eq_{equip_info['id']}"):
+                                updates = {
+                                    'equipment_name': new_eq_name,
+                                    'ri': new_ri,
+                                    'xy_scanner': new_scanner,
+                                    'head_type': new_head,
+                                    'mod_vit': new_mod,
+                                    'sliding_stage': new_stage,
+                                    'sample_chuck': new_chuck,
+                                    'ae': new_ae,
+                                    'end_user': new_end_user,
+                                    'mfg_engineer': new_mfg,
+                                    'qc_engineer': new_qc,
+                                    'reference_doc': new_ref
+                                }
+                                db.update_equipment(equip_info['id'], updates)
+                                st.success("저장되었습니다.")
+                                st.session_state[edit_eq_key] = False
+                                st.rerun()
+                        else:
+                            # --- VIEW MODE ---
+                            st.json(equip_info)
+
                 # 측정 데이터
-                with st.expander("📊 측정 데이터", expanded=True):
-                    trend_data = db.get_pending_measurements(selected_sid)
-                    if not trend_data.empty:
-                        st.dataframe(trend_data, use_container_width=True, hide_index=True)
-                        st.info(f"📊 총 **{len(trend_data)}개** 항목")
+                with st.expander("📊 측정 데이터 (값 수정 가능)", expanded=True):
+                    # Status에 따라 다른 테이블 조회
+                    if equip_info.get('status') == 'pending':
+                        # Pending 상태면 pending_measurements 테이블 조회 (Data Editor용 포맷으로 변환 필요할 수 있음)
+                        # get_pending_measurements returns full columns, select relevant ones
+                        raw_data = db.get_pending_measurements(selected_sid)
+                        
+                        if not raw_data.empty:
+                            # UI 통일을 위해 컬럼명 매핑 (value -> Measurement 등)
+                            # 하지만 pending_measurement는 구조가 좀 다름. 
+                            # 여기서 편집 가능하게 하려면 db.update_pending_measurement가 필요함.
+                            
+                            # For simplicity in Data Explorer, let's treat it similar to measurements table for editing
+                            # We need check_items and val
+                            
+                            # Displaying raw pending data
+                            st.info("💡 승인 대기 중인 데이터입니다. (pending_measurements 테이블)")
+                            
+                            # Editable Pending Data
+                            # We need a unique key for each row. pending_measurements has 'id'.
+                            
+                            edited_pending = st.data_editor(
+                                raw_data,
+                                column_config={
+                                    "check_items": st.column_config.TextColumn("Check Item", disabled=True),
+                                    "value": st.column_config.NumberColumn("Value", required=True)
+                                },
+                                disabled=["id", "sid", "equipment_name", "category", "check_items", "min_value", "criteria", "max_value", "unit", "pass_fail", "trend", "remark", "status"],
+                                use_container_width=True,
+                                hide_index=True,
+                                key=f"pending_editor_{selected_sid}"
+                            )
+                            
+                            if not raw_data.equals(edited_pending):
+                                if st.button("💾 변경사항 저장 (대기 데이터)", type="primary", key=f"save_pending_{selected_sid}"):
+                                    conn = db.get_connection()
+                                    cur = conn.cursor()
+                                    for idx, row in edited_pending.iterrows():
+                                        if row['value'] != raw_data.iloc[idx]['value']:
+                                            cur.execute("UPDATE pending_measurements SET value = ? WHERE id = ?", (row['value'], row['id']))
+                                    conn.commit()
+                                    conn.close()
+                                    st.success("대기 데이터가 수정되었습니다.")
+                                    st.rerun()
+                        else:
+                            st.warning("대기 중인 측정 데이터가 없습니다.")
+
+                    else:
+                        # Approved 상태면 measurements 테이블 조회
+                        trend_data = db.get_measurements_by_sid(selected_sid)
+                        
+                        if not trend_data.empty:
+                            # Data Editor for direct modification
+                            edited_df = st.data_editor(
+                                trend_data,
+                                disabled=['sid', 'check_items', 'equipment_name', 'Category', 'Check Items', 'Min', 'Criteria', 'Max', 'Unit', 'PASS/FAIL', 'Trend', 'Remark'],
+                                column_config={
+                                    'value': st.column_config.NumberColumn(
+                                        "Measurement",
+                                        help="측정값 수정 가능",
+                                        format="%.4f",
+                                        required=True
+                                    )
+                                },
+                                use_container_width=True,
+                                hide_index=True,
+                                key=f"data_editor_{selected_sid}"
+                            )
+                            
+                            # 변경사항 확인 및 저장
+                            if not trend_data.equals(edited_df):
+                                if st.button("💾 변경사항 저장 (데이터)", type="primary", key=f"save_data_{selected_sid}"):
+                                    # DB 업데이트 로직
+                                    conn = db.get_connection()
+                                    cur = conn.cursor()
+                                    for idx, row in edited_df.iterrows():
+                                        if row['value'] != trend_data.iloc[idx]['value']:
+                                            cur.execute("""
+                                                UPDATE measurements 
+                                                SET value = ? 
+                                                WHERE sid = ? AND check_items = ?
+                                            """, (row['value'], row['sid'], row['check_items']))
+                                    conn.commit()
+                                    conn.close()
+                                    st.success("데이터가 수정되었습니다.")
+                                    st.rerun()
+                        else:
+                            st.info("데이터가 없습니다.")
 
 
 def render_admin_tab():

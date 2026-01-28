@@ -1,0 +1,254 @@
+{
+  "_comment": "Equipment Configuration Validation Rules",
+  "_version": "1.0",
+  "_last_updated": "2026-01-20",
+  
+  "model_categories": {
+    "industrial": ["NX-Wafer", "NX-Photo", "NX-Semi"],
+    "research": ["MX-200", "MX-300", "RX-Lab"]
+  },
+  
+  "field_display_names": {
+    "ri": "R&I",
+    "xy_scanner": "XY Scanner",
+    "head_type": "Head Type",
+    "mod_vit": "MOD VIT",
+    "sliding_stage": "Sliding Stage",
+    "sample_chuck": "Sample Chuck",
+    "ae": "AE"
+  },
+  
+  "model_specific_rules": {
+    "NX-Wafer": {
+      "category": "industrial",
+      "display_name": "NX-Wafer (산업용)",
+      "ri": {
+        "allowed": ["Industrial"],
+        "required": true
+      },
+      "xy_scanner": {
+        "allowed": ["Dual 100µm(300mm)", "Dual 50µm(200mm)", "Dual 100µm(200mm)"],
+        "required": true
+      },
+      "head_type": {
+        "allowed": ["Auto Align Standard", "Auto Align Premium", "Manual Align"],
+        "required": true
+      },
+      "mod_vit": {
+        "allowed": ["Dual MOD 6 units", "Dual MOD 8 units", "Dual MOD 4 units"],
+        "required": true
+      },
+      "sliding_stage": {
+        "allowed": ["10mm", "20mm", "30mm"],
+        "required": false
+      },
+      "sample_chuck": {
+        "allowed": ["SiC Anti-warpage chuck", "Ceramic chuck", "Standard chuck"],
+        "required": false
+      },
+      "ae": {
+        "allowed": ["Double Walled", "Triple Walled", "Single Walled"],
+        "required": false
+      }
+    },
+    
+    "NX-Photo": {
+      "category": "industrial",
+      "display_name": "NX-Photo (산업용)",
+      "ri": {
+        "allowed": ["Industrial"],
+        "required": true
+      },
+      "xy_scanner": {
+        "allowed": ["Single 100µm(150mm)", "Dual 100µm(300mm)", "Single 50µm(100mm)"],
+        "required": true
+      },
+      "head_type": {
+        "allowed": ["Manual Align", "Auto Align Standard"],
+        "required": true
+      },
+      "mod_vit": {
+        "allowed": ["Single MOD 4 units", "Dual MOD 6 units", "Single MOD 2 units"],
+        "required": false
+      },
+      "sliding_stage": {
+        "allowed": ["5mm", "10mm"],
+        "required": false
+      },
+      "sample_chuck": {
+        "allowed": ["Standard chuck", "SiC Anti-warpage chuck"],
+        "required": false
+      },
+      "ae": {
+        "allowed": ["Single Walled", "Double Walled"],
+        "required": false
+      }
+    },
+    
+    "NX-Semi": {
+      "category": "industrial",
+      "display_name": "NX-Semi (산업용)",
+      "ri": {
+        "allowed": ["Industrial"],
+        "required": true
+      },
+      "xy_scanner": {
+        "allowed": ["Dual 100µm(300mm)", "Dual 100µm(200mm)"],
+        "required": true
+      },
+      "head_type": {
+        "allowed": ["Auto Align Standard", "Auto Align Premium"],
+        "required": true
+      },
+      "mod_vit": {
+        "allowed": ["Dual MOD 8 units", "Dual MOD 6 units"],
+        "required": true
+      },
+      "sliding_stage": {
+        "allowed": ["10mm", "20mm"],
+        "required": false
+      },
+      "sample_chuck": {
+        "allowed": ["SiC Anti-warpage chuck", "Advanced Anti-warpage"],
+        "required": false
+      },
+      "ae": {
+        "allowed": ["Double Walled", "Triple Walled"],
+        "required": false
+      }
+    },
+    
+    "MX-200": {
+      "category": "research",
+      "display_name": "MX-200 (연구용)",
+      "ri": {
+        "allowed": ["Research"],
+        "required": true
+      },
+      "xy_scanner": {
+        "allowed": ["Single 50µm(100mm)", "Single 100µm(150mm)"],
+        "required": true
+      },
+      "head_type": {
+        "allowed": ["Manual Align"],
+        "required": true
+      },
+      "mod_vit": {
+        "allowed": ["Single MOD 2 units", "Single MOD 4 units"],
+        "required": false
+      },
+      "sliding_stage": {
+        "allowed": ["5mm"],
+        "required": false
+      },
+      "sample_chuck": {
+        "allowed": ["Standard chuck"],
+        "required": false
+      },
+      "ae": {
+        "allowed": ["Single Walled"],
+        "required": false
+      }
+    },
+    
+    "MX-300": {
+      "category": "research",
+      "display_name": "MX-300 (연구용)",
+      "ri": {
+        "allowed": ["Research"],
+        "required": true
+      },
+      "xy_scanner": {
+        "allowed": ["Single 100µm(150mm)", "Dual 50µm(200mm)"],
+        "required": true
+      },
+      "head_type": {
+        "allowed": ["Manual Align", "Semi Auto Align"],
+        "required": true
+      },
+      "mod_vit": {
+        "allowed": ["Single MOD 4 units", "Dual MOD 4 units"],
+        "required": false
+      },
+      "sliding_stage": {
+        "allowed": ["5mm", "10mm"],
+        "required": false
+      },
+      "sample_chuck": {
+        "allowed": ["Standard chuck", "Ceramic chuck"],
+        "required": false
+      },
+      "ae": {
+        "allowed": ["Single Walled", "Double Walled"],
+        "required": false
+      }
+    }
+  },
+  
+  "conditional_rules": [
+    {
+      "id": "dual_scanner_dual_mod",
+      "description": "Dual Scanner는 Dual MOD가 필요합니다",
+      "condition": {
+        "field": "xy_scanner",
+        "operator": "contains",
+        "value": "Dual"
+      },
+      "enforce": {
+        "field": "mod_vit",
+        "operator": "must_contain",
+        "value": "Dual"
+      },
+      "error_message": "Dual Scanner를 선택했으므로 Dual MOD를 선택해야 합니다"
+    },
+    {
+      "id": "single_scanner_single_mod",
+      "description": "Single Scanner는 Single MOD가 필요합니다",
+      "condition": {
+        "field": "xy_scanner",
+        "operator": "contains",
+        "value": "Single"
+      },
+      "enforce": {
+        "field": "mod_vit",
+        "operator": "must_contain",
+        "value": "Single"
+      },
+      "error_message": "Single Scanner를 선택했으므로 Single MOD를 선택해야 합니다"
+    },
+    {
+      "id": "auto_align_sliding_stage",
+      "description": "Auto Align은 10mm 이상 Sliding Stage가 필요합니다",
+      "condition": {
+        "field": "head_type",
+        "operator": "contains",
+        "value": "Auto Align"
+      },
+      "enforce": {
+        "field": "sliding_stage",
+        "operator": "must_be_one_of",
+        "values": ["10mm", "20mm", "30mm"]
+      },
+      "error_message": "Auto Align을 선택했으므로 Sliding Stage는 10mm 이상이어야 합니다"
+    }
+  ],
+  
+  "default_selections": {
+    "NX-Wafer": {
+      "ri": "Industrial",
+      "xy_scanner": "Dual 100µm(300mm)",
+      "head_type": "Auto Align Standard",
+      "mod_vit": "Dual MOD 6 units"
+    },
+    "NX-Photo": {
+      "ri": "Industrial",
+      "xy_scanner": "Dual 100µm(300mm)",
+      "head_type": "Auto Align Standard"
+    },
+    "MX-200": {
+      "ri": "Research",
+      "xy_scanner": "Single 50µm(100mm)",
+      "head_type": "Manual Align"
+    }
+  }
+}

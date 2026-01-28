@@ -189,6 +189,18 @@ def init_db():
         c.execute("ALTER TABLE pending_measurements ADD COLUMN value_text TEXT")
     except sqlite3.OperationalError:
         pass
+    try:
+        c.execute("ALTER TABLE pending_measurements ADD COLUMN value_text TEXT")
+    except sqlite3.OperationalError:
+        pass
+        
+    # Equipment Table Migrations (Additional Info)
+    new_cols = ['end_user', 'mfg_engineer', 'qc_engineer', 'reference_doc']
+    for col in new_cols:
+        try:
+            c.execute(f"ALTER TABLE equipments ADD COLUMN {col} TEXT")
+        except sqlite3.OperationalError:
+            pass
     
     conn.commit()
     conn.close()
@@ -298,7 +310,8 @@ def sync_relational_data(df_equip: pd.DataFrame, df_meas: pd.DataFrame, df_specs
     col_map_equip = {
         'SID': 'sid', '장비명': 'equipment_name', '종료일': 'date', 'R/I': 'ri', 'Model': 'model',
         'XY Scanner': 'xy_scanner', 'Head Type': 'head_type', 'MOD/VIT': 'mod_vit',
-        'Sliding Stage': 'sliding_stage', 'Sample Chuck': 'sample_chuck', 'AE': 'ae'
+        'Sliding Stage': 'sliding_stage', 'Sample Chuck': 'sample_chuck', 'AE': 'ae',
+        'End User': 'end_user', 'Mfg Engineer': 'mfg_engineer', 'QC Engineer': 'qc_engineer', 'Reference Doc': 'reference_doc'
     }
     df_e = df_equip.rename(columns=col_map_equip)
     
@@ -327,7 +340,8 @@ def sync_relational_data(df_equip: pd.DataFrame, df_meas: pd.DataFrame, df_specs
         # Let's set default to 'approved' for bulk sync to maintain backward compatibility if used.
         
         cols = ['sid', 'equipment_name', 'date', 'ri', 'model', 'xy_scanner', 
-                'head_type', 'mod_vit', 'sliding_stage', 'sample_chuck', 'ae', 'status']
+                'head_type', 'mod_vit', 'sliding_stage', 'sample_chuck', 'ae', 
+                'end_user', 'mfg_engineer', 'qc_engineer', 'reference_doc', 'status']
         
         # Prepare values
         vals = [row.get(col) for col in cols[:-1]] # All except status
@@ -391,7 +405,8 @@ def insert_equipment_from_excel(df_equip: pd.DataFrame, df_meas: pd.DataFrame) -
     col_map_equip = {
         'SID': 'sid', '장비명': 'equipment_name', '종료일': 'date', 'R/I': 'ri', 'Model': 'model',
         'XY Scanner': 'xy_scanner', 'Head Type': 'head_type', 'MOD/VIT': 'mod_vit',
-        'Sliding Stage': 'sliding_stage', 'Sample Chuck': 'sample_chuck', 'AE': 'ae'
+        'Sliding Stage': 'sliding_stage', 'Sample Chuck': 'sample_chuck', 'AE': 'ae',
+        'End User': 'end_user', 'Mfg Engineer': 'mfg_engineer', 'QC Engineer': 'qc_engineer', 'Reference Doc': 'reference_doc'
     }
     df_e = df_equip.rename(columns=col_map_equip)
     if 'date' in df_e.columns:
@@ -409,7 +424,8 @@ def insert_equipment_from_excel(df_equip: pd.DataFrame, df_meas: pd.DataFrame) -
                 continue
 
         cols = ['sid', 'equipment_name', 'date', 'ri', 'model', 'xy_scanner', 
-                'head_type', 'mod_vit', 'sliding_stage', 'sample_chuck', 'ae', 'status']
+                'head_type', 'mod_vit', 'sliding_stage', 'sample_chuck', 'ae', 
+                'end_user', 'mfg_engineer', 'qc_engineer', 'reference_doc', 'status']
         
         vals = [row.get(col) for col in cols[:-1]]
         vals.append('pending') # Set status to pending
@@ -1063,3 +1079,59 @@ def get_measurements_by_sid(sid: str, status: str = 'approved') -> pd.DataFrame:
     conn.close()
     return df
 
+
+def get_equipment_count() -> int:
+    """Get total number of equipments in the database."""
+    conn = get_connection()
+    c = conn.cursor()
+    try:
+        c.execute("SELECT COUNT(*) FROM equipments")
+        count = c.fetchone()[0]
+    except sqlite3.OperationalError:
+        count = 0
+    conn.close()
+    return count
+
+
+def update_equipment(equip_id: int, updates: Dict[str, Any]) -> bool:
+    """
+    Update specific fields of an equipment record.
+    
+    Args:
+        equip_id: Equipment ID
+        updates: Dictionary of column_name: new_value
+    """
+    if not updates:
+        return False
+        
+    conn = get_connection()
+    c = conn.cursor()
+    
+    # Filter out invalid columns to prevent SQL injection or errors
+    valid_columns = [
+        'equipment_name', 'ri', 'model', 'xy_scanner', 'head_type', 
+        'mod_vit', 'sliding_stage', 'sample_chuck', 'ae', 'date', 'status',
+        'end_user', 'mfg_engineer', 'qc_engineer', 'reference_doc'
+    ]
+    
+    clean_updates = {k: v for k, v in updates.items() if k in valid_columns}
+    
+    if not clean_updates:
+        conn.close()
+        return False
+        
+    set_clause = ", ".join([f"{col} = ?" for col in clean_updates.keys()])
+    values = list(clean_updates.values())
+    values.append(equip_id)
+    
+    try:
+        c.execute(f"UPDATE equipments SET {set_clause} WHERE id = ?", values)
+        conn.commit()
+        success = True
+    except Exception as e:
+        print(f"Error updating equipment: {e}")
+        success = False
+    finally:
+        conn.close()
+        
+    return success

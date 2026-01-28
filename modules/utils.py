@@ -258,3 +258,118 @@ def build_display_map(df: pd.DataFrame, column: str) -> Tuple[List[str], Dict[st
     display_labels = sorted(key_to_display.values())
     
     return display_labels, key_to_display
+
+
+def compare_dicts(old_dict: dict, new_dict: dict) -> dict:
+    """
+    두 딕셔너리를 비교하여 변경된 항목을 반환
+    """
+    changes = {}
+    all_keys = set(old_dict.keys()) | set(new_dict.keys())
+    
+    for key in all_keys:
+        old_val = old_dict.get(key)
+        new_val = new_dict.get(key)
+        
+        # 값 비교 (NaN 처리 포함)
+        if pd.isna(old_val) and pd.isna(new_val):
+            continue
+        if str(old_val) != str(new_val):
+            changes[key] = {'old': old_val, 'new': new_val}
+            
+    return changes
+
+
+def compare_dataframes(df_old: pd.DataFrame, df_new: pd.DataFrame) -> List[dict]:
+    """
+    두 데이터프레임을 비교하여 변경된 행의 정보를 반환
+    """
+    changes = []
+    
+    # 인덱스가 동일하다고 가정 (id 또는 고유 식별자 기준 정렬 필요)
+    # 여기서는 행 순서가 같다고 가정하고 비교
+    if len(df_old) != len(df_new):
+        return [{'error': 'Row count mismatch'}]
+        
+    for i in range(len(df_old)):
+        row_old = df_old.iloc[i]
+        row_new = df_new.iloc[i]
+        
+        row_changes = {}
+        for col in df_old.columns:
+            if col not in df_new.columns:
+                continue
+                
+            val_old = row_old[col]
+            val_new = row_new[col]
+            
+            # 숫자 비교 (float tolerance)
+            try:
+                if isinstance(val_old, (int, float)) and isinstance(val_new, (int, float)):
+                    if abs(val_old - val_new) < 1e-9:
+                        continue
+            except:
+                pass
+            
+            # 일반 값 비교
+            if str(val_old) != str(val_new):
+                row_changes[col] = {'old': val_old, 'new': val_new}
+        
+        if row_changes:
+            # 식별 정보 추가
+            check_item = row_old.get('Check Items') or row_old.get('check_items') or f"Row {i}"
+            changes.append({
+                'item': check_item,
+                'changes': row_changes
+            })
+            
+    return changes
+
+
+def create_original_excel(equipment_data: dict, measurements_data: pd.DataFrame) -> bytes:
+    """
+    장비 정보와 측정 데이터를 엑셀 파일(바이트 스트림)로 생성
+    """
+    import io
+    output = io.BytesIO()
+    
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        # 1. Equipment Info
+        df_info = pd.DataFrame([equipment_data]).T.reset_index()
+        df_info.columns = ['Field', 'Value']
+        df_info.to_excel(writer, sheet_name='Info', index=False)
+        
+        # 2. Measurements
+        measurements_data.to_excel(writer, sheet_name='Measurements', index=False)
+        
+    return output.getvalue()
+
+
+def create_modified_excel(eq_old: dict, eq_new: dict, meas_old: pd.DataFrame, meas_new: pd.DataFrame) -> bytes:
+    """
+    수정된 정보와 원본 정보를 포함한 엑셀 파일 생성
+    """
+    import io
+    output = io.BytesIO()
+    
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        # 1. Modified Info
+        df_info = pd.DataFrame([eq_new]).T.reset_index()
+        df_info.columns = ['Field', 'Value']
+        df_info.to_excel(writer, sheet_name='Modified_Info', index=False)
+        
+        # 2. Modified Measurements
+        meas_new.to_excel(writer, sheet_name='Modified_Data', index=False)
+        
+        # 3. Changes Summary
+        # (구현 가능: 변경점 요약 시트 추가)
+        
+        # 4. Original Info
+        df_info_old = pd.DataFrame([eq_old]).T.reset_index()
+        df_info_old.columns = ['Field', 'Value']
+        df_info_old.to_excel(writer, sheet_name='Original_Info', index=False)
+        
+        # 5. Original Measurements
+        meas_old.to_excel(writer, sheet_name='Original_Data', index=False)
+        
+    return output.getvalue()
