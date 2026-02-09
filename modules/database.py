@@ -77,16 +77,29 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             sid TEXT NOT NULL,                     -- SID Number
             equipment_id INTEGER,                  -- FK to equipments.id (nullable)
-            action TEXT NOT NULL,                  -- 'approved', 'rejected', 'resubmitted'
+            equipment_name TEXT,                   -- Equipment Name (for display)
+            action TEXT NOT NULL,                  -- 'approve', 'reject', 'resubmit'
             admin_name TEXT,                       -- 관리자 이름
             reason TEXT,                           -- 반려/승인 사유
             previous_status TEXT,                  -- 이전 상태
             new_status TEXT,                       -- 새 상태
             modification_count INTEGER DEFAULT 0,  -- 수정 항목 개수
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            action_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             metadata TEXT                          -- JSON: 추가 정보
         )
     ''')
+    
+    # Add equipment_name column if not exists (migration for existing DBs)
+    try:
+        c.execute("ALTER TABLE approval_history ADD COLUMN equipment_name TEXT")
+    except:
+        pass  # Column already exists
+    
+    # Rename timestamp to action_at if exists (migration)
+    try:
+        c.execute("ALTER TABLE approval_history RENAME COLUMN timestamp TO action_at")
+    except:
+        pass  # Already renamed or doesn't exist
 
     # 5. Pending Measurements Table (Staging Area)
     # 업로드된 원본 데이터를 검증 전까지 그대로 보관하는 테이블
@@ -657,7 +670,14 @@ def get_all_equipments(filters: dict = None) -> pd.DataFrame:
     
     # 날짜 컬럼 변환
     if 'date' in df.columns:
-        df['date'] = pd.to_datetime(df['date'])
+        try:
+            # Try to handle mixed formats (e.g. "January 1, 2026" and "2026-01-30")
+            # format='mixed' is available in pandas >= 2.0
+            df['date'] = pd.to_datetime(df['date'], format='mixed', errors='coerce')
+        except:
+            # Fallback for older pandas or other errors
+            # excessive errors='coerce' will result in NaT for unparsable dates
+            df['date'] = pd.to_datetime(df['date'], errors='coerce')
         
     return df
 
@@ -737,28 +757,30 @@ def delete_equipment(equip_id: int):
 def log_approval_history(sid: str, equipment_id: int = None, action: str = None, 
                          admin_name: str = None, reason: str = None, 
                          previous_status: str = None, new_status: str = None,
-                         modification_count: int = 0, metadata: str = None):
+                         modification_count: int = 0, metadata: str = None,
+                         equipment_name: str = None):
     """
     Log approval/rejection history.
     
     Args:
         sid: SID number
         equipment_id: Equipment ID (nullable)
-        action: 'approved', 'rejected', 'resubmitted'
+        action: 'approve', 'reject', 'resubmit'
         admin_name: Admin name
         reason: Approval/rejection reason
         previous_status: Previous status
         new_status: New status
         modification_count: Number of modifications made
         metadata: JSON string with additional info
+        equipment_name: Equipment name (for display in dashboard)
     """
     conn = get_connection()
     c = conn.cursor()
     c.execute("""
         INSERT INTO approval_history 
-        (sid, equipment_id, action, admin_name, reason, previous_status, new_status, modification_count, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (sid, equipment_id, action, admin_name, reason, previous_status, new_status, modification_count, metadata))
+        (sid, equipment_id, equipment_name, action, admin_name, reason, previous_status, new_status, modification_count, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (sid, equipment_id, equipment_name, action, admin_name, reason, previous_status, new_status, modification_count, metadata))
     conn.commit()
     conn.close()
 
@@ -1008,7 +1030,10 @@ def fetch_filtered_data(filters: Dict[str, List[str]]) -> pd.DataFrame:
     if 'Value' in df.columns:
         df['Value'] = pd.to_numeric(df['Value'], errors='coerce')
     if '종료일' in df.columns:
-        df['종료일'] = pd.to_datetime(df['종료일'])
+        try:
+            df['종료일'] = pd.to_datetime(df['종료일'], format='mixed', errors='coerce')
+        except:
+            df['종료일'] = pd.to_datetime(df['종료일'], errors='coerce')
         
     return df
 
@@ -1251,3 +1276,302 @@ def update_equipment(equip_id: int, updates: Dict[str, Any]) -> bool:
         conn.close()
         
     return success
+
+def get_storage_stats():
+    """
+    Get database storage statistics.
+    Returns DB file size, disk space, and table record counts.
+    """
+    import shutil
+    
+    db_path = DB_FILE
+    
+    # DB 파일 크기
+    db_size = os.path.getsize(db_path) if os.path.exists(db_path) else 0
+    
+    # 디스크 여유 공간
+    try:
+        disk_usage = shutil.disk_usage(os.path.dirname(os.path.abspath(db_path)))
+        disk_free = disk_usage.free
+        disk_total = disk_usage.total
+    except:
+        disk_free = 0
+        disk_total = 0
+    
+    # 테이블별 레코드 수
+    conn = get_connection()
+    tables = ['equipments', 'measurements', 'pending_measurements', 'approval_history', 'specs']
+    record_counts = {}
+    for table in tables:
+        try:
+            count = pd.read_sql_query(f"SELECT COUNT(*) as cnt FROM {table}", conn)['cnt'].iloc[0]
+            record_counts[table] = int(count)
+        except:
+            record_counts[table] = 0
+    conn.close()
+    
+    return {
+        'db_size_bytes': db_size,
+        'db_size_mb': round(db_size / (1024 * 1024), 2),
+        'disk_free_gb': round(disk_free / (1024 ** 3), 2),
+        'disk_total_gb': round(disk_total / (1024 ** 3), 2),
+        'disk_used_percent': round((disk_total - disk_free) / disk_total * 100, 1) if disk_total > 0 else 0,
+        'record_counts': record_counts,
+        'total_records': sum(record_counts.values())
+    }
+
+def get_monthly_upload_stats(months: int = 12):
+    """
+    Get monthly upload statistics for trend chart.
+    Returns DataFrame with month and upload counts.
+    """
+    conn = get_connection()
+    
+    query = f"""
+        SELECT 
+            strftime('%Y-%m', uploaded_at) as month,
+            COUNT(*) as upload_count
+        FROM equipments
+        WHERE uploaded_at >= date('now', '-{months} months')
+        GROUP BY strftime('%Y-%m', uploaded_at)
+        ORDER BY month
+    """
+    
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    
+    return df
+
+def find_duplicate_uploads():
+    """
+    Find potential duplicate uploads (same SID + date).
+    Returns DataFrame of duplicates.
+    """
+    conn = get_connection()
+    
+    query = """
+        SELECT 
+            sid, 
+            equipment_name,
+            date,
+            COUNT(*) as duplicate_count,
+            GROUP_CONCAT(id) as ids
+        FROM equipments
+        WHERE sid IS NOT NULL AND sid != ''
+        GROUP BY sid, date
+        HAVING COUNT(*) > 1
+        ORDER BY duplicate_count DESC
+    """
+    
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    
+    return df
+
+def vacuum_database():
+    """
+    Run VACUUM to reclaim unused space.
+    Returns size before and after.
+    """
+    db_path = DB_FILE
+    size_before = os.path.getsize(db_path) if os.path.exists(db_path) else 0
+    
+    conn = get_connection()
+    conn.execute("VACUUM")
+    conn.close()
+    
+    size_after = os.path.getsize(db_path) if os.path.exists(db_path) else 0
+    
+    return {
+        'size_before_mb': round(size_before / (1024 * 1024), 2),
+        'size_after_mb': round(size_after / (1024 * 1024), 2),
+        'space_saved_mb': round((size_before - size_after) / (1024 * 1024), 2)
+    }
+
+# ============================================================
+# Phase 1: Upload Status Dashboard Functions
+# ============================================================
+
+def get_upload_status_summary():
+    """
+    Get summary counts for upload status dashboard.
+    Returns counts of pending, approved, and recently rejected items.
+    """
+    conn = get_connection()
+    
+    # Pending count
+    pending = pd.read_sql_query(
+        "SELECT COUNT(*) as cnt FROM equipments WHERE status = 'pending'", 
+        conn
+    )['cnt'].iloc[0]
+    
+    # Approved count
+    approved = pd.read_sql_query(
+        "SELECT COUNT(*) as cnt FROM equipments WHERE status = 'approved'", 
+        conn
+    )['cnt'].iloc[0]
+    
+    # Recent rejections (last 7 days) from approval_history
+    rejected = pd.read_sql_query("""
+        SELECT COUNT(*) as cnt FROM approval_history 
+        WHERE action = 'reject' 
+        AND action_at >= datetime('now', '-7 days')
+    """, conn)['cnt'].iloc[0]
+    
+    conn.close()
+    
+    return {
+        'pending': int(pending),
+        'approved': int(approved),
+        'rejected_7days': int(rejected),
+        'total': int(pending + approved)
+    }
+
+def get_recent_rejections(days: int = 7, limit: int = 5):
+    """
+    Get list of recently rejected uploads.
+    Returns DataFrame with SID, equipment_name, date, reason.
+    """
+    conn = get_connection()
+    
+    query = f"""
+        SELECT 
+            ah.sid,
+            ah.equipment_name,
+            ah.action_at as rejected_at,
+            ah.reason as reject_reason
+        FROM approval_history ah
+        WHERE ah.action = 'reject'
+        AND ah.action_at >= datetime('now', '-{days} days')
+        ORDER BY ah.action_at DESC
+        LIMIT {limit}
+    """
+    
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    
+    return df
+
+# ============================================================
+# Phase 2: SID Duplicate Check Functions
+# ============================================================
+
+def check_sid_status(sid: str) -> dict:
+    """
+    Check the status of a given SID in the database.
+    
+    Returns:
+        dict with keys:
+        - status: 'new', 'pending', 'approved', 'rejected'
+        - message: User-friendly message
+        - can_upload: Boolean indicating if upload is allowed
+        - details: Additional info (approval date, rejection reason, etc.)
+    """
+    if not sid or sid.strip() == '':
+        return {
+            'status': 'new',
+            'message': '✅ 새로운 데이터입니다. 업로드 가능합니다.',
+            'can_upload': True,
+            'details': None
+        }
+    
+    conn = get_connection()
+    
+    # 1. Check if SID exists in equipments table
+    equip = pd.read_sql_query(
+        "SELECT id, status, equipment_name, uploaded_at FROM equipments WHERE sid = ?",
+        conn, params=(sid,)
+    )
+    
+    if not equip.empty:
+        current_status = equip['status'].iloc[0]
+        equip_name = equip['equipment_name'].iloc[0]
+        uploaded_at = equip['uploaded_at'].iloc[0]
+        
+        if current_status == 'pending':
+            conn.close()
+            return {
+                'status': 'pending',
+                'message': f'⏳ 이미 승인 대기 중인 데이터입니다. (업로드: {uploaded_at})',
+                'can_upload': False,
+                'details': {
+                    'equipment_name': equip_name,
+                    'uploaded_at': uploaded_at
+                }
+            }
+        elif current_status == 'approved':
+            # Get approval date from history
+            approval_info = pd.read_sql_query("""
+                SELECT action_at FROM approval_history 
+                WHERE sid = ? AND action = 'approve'
+                ORDER BY action_at DESC LIMIT 1
+            """, conn, params=(sid,))
+            
+            approved_at = approval_info['action_at'].iloc[0] if not approval_info.empty else 'Unknown'
+            
+            conn.close()
+            return {
+                'status': 'approved',
+                'message': f'📊 이미 승인된 데이터입니다. (승인일: {approved_at})',
+                'can_upload': False,
+                'details': {
+                    'equipment_name': equip_name,
+                    'approved_at': approved_at
+                }
+            }
+    
+    # 2. Check if SID was previously rejected (not in equipments but in history)
+    rejection_info = pd.read_sql_query("""
+        SELECT equipment_name, action_at, reason 
+        FROM approval_history 
+        WHERE sid = ? AND action = 'reject'
+        ORDER BY action_at DESC LIMIT 1
+    """, conn, params=(sid,))
+    
+    conn.close()
+    
+    if not rejection_info.empty:
+        rejected_at = rejection_info['action_at'].iloc[0]
+        reason = rejection_info['reason'].iloc[0] or '사유 없음'
+        equip_name = rejection_info['equipment_name'].iloc[0]
+        
+        return {
+            'status': 'rejected',
+            'message': f'❌ 이전에 반려된 SID입니다. 수정 후 재업로드 가능합니다.',
+            'can_upload': True,
+            'details': {
+                'equipment_name': equip_name,
+                'rejected_at': rejected_at,
+                'reject_reason': reason
+            }
+        }
+    
+    # 3. New SID
+    return {
+        'status': 'new',
+        'message': '✅ 새로운 SID입니다. 업로드 가능합니다.',
+        'can_upload': True,
+        'details': None
+    }
+
+def get_rejection_history(sid: str) -> pd.DataFrame:
+    """
+    Get all rejection history for a given SID.
+    Used in admin approval queue to show previous rejections.
+    """
+    conn = get_connection()
+    
+    query = """
+        SELECT 
+            action_at as rejected_at,
+            reason as reject_reason,
+            admin_name
+        FROM approval_history 
+        WHERE sid = ? AND action = 'reject'
+        ORDER BY action_at DESC
+    """
+    
+    df = pd.read_sql_query(query, conn, params=(sid,))
+    conn.close()
+    
+    return df

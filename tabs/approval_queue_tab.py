@@ -355,22 +355,51 @@ def render_approval_queue_tab():
             st.rerun()
             
     with col_reject:
-        with st.expander("❌ 반려하기"):
-            reject_reason = st.text_area("반려 사유 (필수)", key=f"reject_reason_{equipment_id}")
+        with st.expander("❌ 반려하기", expanded=False):
+            st.markdown("**📋 빠른 선택 (클릭 시 자동 입력)**")
+            
+            # Quick select buttons
+            quick_reasons = ["데이터 오류", "SID 중복", "측정값 누락", "범위 초과", "서류 미비", "기타"]
+            
+            # Store selected quick reason in session state
+            if f"quick_reason_{equipment_id}" not in st.session_state:
+                st.session_state[f"quick_reason_{equipment_id}"] = ""
+            
+            cols = st.columns(3)
+            for i, reason in enumerate(quick_reasons):
+                with cols[i % 3]:
+                    if st.button(reason, key=f"quick_{reason}_{equipment_id}", use_container_width=True):
+                        st.session_state[f"quick_reason_{equipment_id}"] = reason
+            
+            st.markdown("**💬 상세 사유 (필수)**")
+            
+            # Pre-fill with quick reason if selected
+            default_reason = st.session_state.get(f"quick_reason_{equipment_id}", "")
+            
+            reject_reason = st.text_area(
+                "반려 사유를 입력하세요",
+                value=default_reason,
+                placeholder="예: Z Height 값이 비정상적으로 높습니다. 재측정 후 업로드 부탁드립니다.",
+                key=f"reject_reason_{equipment_id}"
+            )
+            
+            st.divider()
+            
             if st.button("❌ 반려 확정", type="secondary", use_container_width=True, key=f"reject_confirm_{equipment_id}"):
                 if not reject_reason.strip():
-                    st.error("사유를 입력해주세요.")
+                    st.error("⚠️ 사유를 입력해주세요.")
                 else:
                     db.reject_equipment(equipment_id, reason=reject_reason, admin_name=admin_name)
                     db.log_approval_history(
                         sid=selected_row['sid'],
                         equipment_id=equipment_id,
-                        action='rejected',
+                        action='reject',
                         admin_name=admin_name,
                         reason=reject_reason,
                         previous_status='pending',
                         new_status='rejected',
-                        modification_count=total_changes
+                        modification_count=total_changes,
+                        equipment_name=selected_row['equipment_name']
                     )
-                    st.warning("❌ 반려되었습니다.")
+                    st.warning("❌ 반려되었습니다. 생산 엔지니어에게 알림이 전송됩니다.")
                     st.rerun()

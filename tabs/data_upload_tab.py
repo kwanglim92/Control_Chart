@@ -5,22 +5,55 @@ Excel Upload Tab - Checklist Parser UI
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from modules import database as db
 
 # This function will be imported in app.py
-def render_upload_tab(extract_func, insert_func, sync_func, equipment_options, industrial_models, check_status_func=None, log_history_func=None):
+def render_upload_tab(extract_func, insert_func, equipment_options, industrial_models, log_history_func=None):
     """
-    Render the upload tab with 4-step process
+    Render the upload tab with dashboard and 4-step process
     
     Args:
         extract_func: extract_equipment_info_from_last_sheet function
         insert_func: db.insert_equipment_from_excel function
-        sync_func: sync_data_from_local function
         equipment_options: EQUIPMENT_OPTIONS dict
         industrial_models: INDUSTRIAL_MODELS list
-        check_status_func: db.get_equipment_status function (optional)
         log_history_func: db.log_approval_history function (optional)
     """
     st.header("📤 체크리스트 업로드 (Checklist Upload)")
+    
+    # ============================================
+    # 📊 접수 현황 대시보드 (전광판)
+    # ============================================
+    st.markdown("### 📊 접수 현황")
+    
+    status_summary = db.get_upload_status_summary()
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("⏳ 승인 대기", f"{status_summary['pending']:,}건")
+    
+    with col2:
+        st.metric("✅ 승인 완료", f"{status_summary['approved']:,}건")
+    
+    with col3:
+        if status_summary['rejected_7days'] > 0:
+            st.metric("❌ 최근 반려", f"{status_summary['rejected_7days']:,}건", delta="7일 이내", delta_color="inverse")
+        else:
+            st.metric("❌ 최근 반려", "0건")
+    
+    with col4:
+        st.metric("📁 전체", f"{status_summary['total']:,}건")
+    
+    # 최근 반려 목록
+    recent_rejections = db.get_recent_rejections(days=7, limit=5)
+    
+    if not recent_rejections.empty:
+        with st.expander("📅 최근 반려 목록 (클릭하여 확인)", expanded=False):
+            for _, row in recent_rejections.iterrows():
+                st.markdown(f"❌ **{row['sid'] or 'N/A'}** | {row['equipment_name'] or 'N/A'} | {row['reject_reason'] or '사유 없음'} | {row['rejected_at']}")
+    
+    st.divider()
     
     # Auto-load message
     if 'auto_load_msg' in st.session_state:
@@ -51,6 +84,31 @@ def render_upload_tab(extract_func, insert_func, sync_func, equipment_options, i
             auto_info = extract_func(uploaded_file)
         
         if auto_info:
+            # ============================================
+            # SID 중복 검사
+            # ============================================
+            extracted_sid = auto_info.get('sid', '')
+            sid_status = db.check_sid_status(extracted_sid)
+            
+            # Display SID status prominently
+            if sid_status['status'] == 'new':
+                st.success(sid_status['message'])
+            elif sid_status['status'] == 'pending':
+                st.error(sid_status['message'])
+                st.warning("⚠️ 관리자에게 문의하거나 기존 데이터가 처리될 때까지 기다려주세요.")
+                st.stop()  # Block further processing
+            elif sid_status['status'] == 'approved':
+                st.error(sid_status['message'])
+                st.warning("⚠️ 이미 승인된 데이터는 재업로드할 수 없습니다.")
+                st.stop()  # Block further processing
+            elif sid_status['status'] == 'rejected':
+                st.warning(sid_status['message'])
+                if sid_status['details']:
+                    st.info(f"💬 이전 반려 사유: {sid_status['details'].get('reject_reason', '사유 없음')}")
+                st.success("✅ 수정 후 재업로드 가능합니다.")
+            
+            st.divider()
+            
             # Display extracted information
             col1, col2 = st.columns(2)
             with col1:
@@ -221,98 +279,74 @@ def render_upload_tab(extract_func, insert_func, sync_func, equipment_options, i
                         if not equipment_name or equipment_name.strip() == "":
                             st.error("⚠️ 장비명을 입력해주세요!")
                         else:
-                            # --- Status Check Logic ---
-                            can_proceed = True
-                            sid_to_check = auto_info.get('sid', '')
-                            
-                            if check_status_func and sid_to_check:
-                                current_status = check_status_func(sid_to_check)
+                            # SID validation is already done at the top with db.check_sid_status()
+                            # If we reach here, upload is allowed
+                            # Process data
+                            with st.spinner("데이터 추출 및 저장 중..."):
+                                try:
+                                    # Read measurement data
+                                    df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
+                                    
+                                    # Filter: Trend and Measurement both present
+                                    filtered = df[
+                                        (df['Trend'].notna()) & 
+                                        (df['Measurement'].notna())
+                                    ].copy()
                                 
-                                if current_status == 'approved':
-                                    st.error(f"⛔ **업로드 불가**: SID '{sid_to_check}' 장비는 이미 승인 완료되었습니다. 수정이 필요하면 관리자에게 문의하세요.")
-                                    can_proceed = False
-                                    
-                                elif current_status == 'rejected':
-                                    st.info(f"🔄 **재제출**: 반려된 장비('{sid_to_check}')의 수정 데이터입니다. 재제출 이력이 기록됩니다.")
-                                    if log_history_func:
-                                        log_history_func(
-                                            sid=sid_to_check, 
-                                            action='resubmitted', 
-                                            reason='User re-uploaded corrected data',
-                                            previous_status='rejected',
-                                            new_status='pending'
-                                        )
+                                    if filtered.empty:
+                                        st.error("❌ Trend와 Measurement가 모두 있는 데이터가 없습니다.")
+                                    else:
+                                        # Create Equipment DataFrame (1 row)
+                                        df_equipment = pd.DataFrame([{
+                                            'SID': auto_info.get('sid', ''),
+                                            '장비명': equipment_name,
+                                            '종료일': auto_info.get('date', ''),
+                                            'R/I': auto_info.get('ri', ''),
+                                            'Model': auto_info.get('model', ''),
+                                            'XY Scanner': xy_scanner,
+                                            'Head Type': head_type,
+                                            'MOD/VIT': mod_vit,
+                                            'Sliding Stage': sliding_stage,
+                                            'Sample Chuck': sample_chuck,
+                                            'AE': ae,
+                                            'End User': auto_info.get('end_user', ''),
+                                            'Mfg Engineer': auto_info.get('mfg_engineer', ''),
+                                            'QC Engineer': auto_info.get('qc_engineer', ''),
+                                            'Reference Doc': auto_info.get('reference_doc', '')
+                                        }])
                                         
-                                elif current_status == 'pending':
-                                    st.warning(f"⚠️ **덮어쓰기**: SID '{sid_to_check}' 장비는 이미 대기 중입니다. 기존 데이터를 덮어쓰고 갱신합니다.")
-                            
-                            if can_proceed:
-                                # Process data
-                                with st.spinner("데이터 추출 및 저장 중..."):
-                                    try:
-                                        # Read measurement data
-                                        df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
+                                        # Create Measurements DataFrame (N rows)
+                                        # Pass ALL rows (including non-Trend rows) to pending_measurements
+                                        # measurements table will filter automatically in insert_equipment_from_excel
+                                        df_measurements = df.copy()  # Use complete data, not filtered
+                                        df_measurements['SID'] = auto_info.get('sid', '')
+                                        df_measurements['장비명'] = equipment_name
+                                        # Ensure required columns for legacy support
+                                        if 'Check Items' not in df_measurements.columns and 'check_items' in df_measurements.columns:
+                                            df_measurements['Check Items'] = df_measurements['check_items']
+                                        if 'Value' not in df_measurements.columns and 'Measurement' in df_measurements.columns:
+                                            df_measurements['Value'] = df_measurements['Measurement']
                                         
-                                        # Filter: Trend and Measurement both present
-                                        filtered = df[
-                                            (df['Trend'].notna()) & 
-                                            (df['Measurement'].notna())
-                                        ].copy()
-                                    
-                                        if filtered.empty:
-                                            st.error("❌ Trend와 Measurement가 모두 있는 데이터가 없습니다.")
-                                        else:
-                                            # Create Equipment DataFrame (1 row)
-                                            df_equipment = pd.DataFrame([{
-                                                'SID': auto_info.get('sid', ''),
-                                                '장비명': equipment_name,
-                                                '종료일': auto_info.get('date', ''),
-                                                'R/I': auto_info.get('ri', ''),
-                                                'Model': auto_info.get('model', ''),
-                                                'XY Scanner': xy_scanner,
-                                                'Head Type': head_type,
-                                                'MOD/VIT': mod_vit,
-                                                'Sliding Stage': sliding_stage,
-                                                'Sample Chuck': sample_chuck,
-                                                'AE': ae,
-                                                'End User': auto_info.get('end_user', ''),
-                                                'Mfg Engineer': auto_info.get('mfg_engineer', ''),
-                                                'QC Engineer': auto_info.get('qc_engineer', ''),
-                                                'Reference Doc': auto_info.get('reference_doc', '')
-                                            }])
-                                            
-                                            # Create Measurements DataFrame (N rows)
-                                            # Pass ALL rows (including non-Trend rows) to pending_measurements
-                                            # measurements table will filter automatically in insert_equipment_from_excel
-                                            df_measurements = df.copy()  # Use complete data, not filtered
-                                            df_measurements['SID'] = auto_info.get('sid', '')
-                                            df_measurements['장비명'] = equipment_name
-                                            # Ensure required columns for legacy support
-                                            if 'Check Items' not in df_measurements.columns and 'check_items' in df_measurements.columns:
-                                                df_measurements['Check Items'] = df_measurements['check_items']
-                                            if 'Value' not in df_measurements.columns and 'Measurement' in df_measurements.columns:
-                                                df_measurements['Value'] = df_measurements['Measurement']
-                                            
-                                            # Insert to DB with status='pending'
-                                            counts = insert_func(df_equipment, df_measurements)
-                                            
-                                            st.success(f"""
-                                            ✅ **제출 완료!**
-                                            
-                                            - 장비: {counts['equipments']}대
-                                            - 측정값: {counts['measurements']}건
-                                            - SID: {auto_info.get('sid', '')}
-                                            
-                                            관리자 승인 대기 목록에 추가되었습니다.
-                                            """)
-                                            
-                                            # Clear the uploader (requires page refresh)
-                                            st.info("새로운 파일을 업로드하려면 페이지를 새로고침하세요.")
-                                    
-                                    except Exception as e:
-                                        st.error(f"❌ 처리 실패: {str(e)}")
-                                        import traceback
-                                        st.code(traceback.format_exc())
+                                        # Insert to DB with status='pending'
+                                        counts = insert_func(df_equipment, df_measurements)
+                                        
+                                        st.success(f"""
+                                        ✅ **제출 완료!**
+                                        
+                                        - 장비: {counts['equipments']}대
+                                        - 측정값: {counts['measurements']}건
+                                        - SID: {auto_info.get('sid', '')}
+                                        
+                                        관리자 승인 대기 목록에 추가되었습니다.
+                                        """)
+                                        
+                                        # Clear the uploader (requires page refresh)
+                                        st.info("새로운 파일을 업로드하려면 페이지를 새로고침하세요.")
+                                
+                                except Exception as e:
+                                    st.error(f"❌ 처리 실패: {str(e)}")
+                                    import traceback
+                                    st.code(traceback.format_exc())
             
             except Exception as e:
                 st.error(f"엑셀 파일 읽기 실패: {str(e)}")
@@ -344,15 +378,5 @@ def render_upload_tab(extract_func, insert_func, sync_func, equipment_options, i
                         st.write("파일에 'Last' 시트를 추가해주세요.")
                 except Exception as diag_e:
                     st.error(f"진단 실패: {str(diag_e)}")
-    
-    # Section for local file sync (for admin)
-    with st.expander("🔧 관리자: 로컬 파일 동기화"):
-        st.info("""
-        **관리자 전용**  
-        프로젝트 `data/data.xlsx` 파일을 읽어 데이터를 갱신합니다.  
-        이 방식으로 로드된 데이터는 **즉시 승인 상태**로 대시보드에 표시됩니다.
-        """)
-        
-        if st.button("🔄 로컬 데이터 동기화 실행", use_container_width=True, key='local_sync'):
-            with st.spinner("data.xlsx 파일 읽는 중..."):
-                sync_func()
+
+    # Local sync section removed - DB is now the single source of truth

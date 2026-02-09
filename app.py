@@ -702,74 +702,112 @@ def render_data_maintenance():
     """Tab 4-4: Data Maintenance and Migration Tools"""
     st.subheader("🔧 데이터 관리")
     
-    st.info("이 탭에서는 데이터베이스 일관성을 관리하고 레거시 데이터를 정리할 수 있습니다.")
+    # === 1. 저장 용량 모니터링 ===
+    st.markdown("### 💾 저장 용량")
     
-    # Get current migration status
-    status = db.get_migration_status()
+    storage = db.get_storage_stats()
     
-    # Display status cards
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("총 측정 데이터", f"{status['total_measurements']:,}건")
+        st.metric("DB 파일 크기", f"{storage['db_size_mb']} MB")
     
     with col2:
+        st.metric("총 레코드 수", f"{storage['total_records']:,}건")
+    
+    with col3:
+        disk_status = "✓" if storage['disk_free_gb'] > 10 else "⚠️"
+        st.metric("디스크 여유 공간", f"{storage['disk_free_gb']} GB {disk_status}")
+    
+    with col4:
+        st.metric("디스크 사용률", f"{storage['disk_used_percent']}%")
+    
+    # 테이블별 레코드 수
+    with st.expander("📊 테이블별 레코드 수", expanded=False):
+        table_data = []
+        for table, count in storage['record_counts'].items():
+            table_data.append({"테이블": table, "레코드 수": f"{count:,}건"})
+        st.dataframe(pd.DataFrame(table_data), use_container_width=True, hide_index=True)
+    
+    st.divider()
+    
+    # === 2. 월별 업로드 추이 ===
+    st.markdown("### 📈 월별 업로드 현황")
+    
+    monthly_stats = db.get_monthly_upload_stats(12)
+    
+    if not monthly_stats.empty:
+        import plotly.express as px
+        fig = px.bar(
+            monthly_stats, 
+            x='month', 
+            y='upload_count',
+            labels={'month': '월', 'upload_count': '업로드 수'},
+            color_discrete_sequence=['#4CAF50']
+        )
+        fig.update_layout(
+            height=300,
+            margin=dict(l=20, r=20, t=20, b=20),
+            xaxis_title="",
+            yaxis_title="업로드 수"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("최근 12개월 업로드 데이터가 없습니다.")
+    
+    st.divider()
+    
+    # === 3. 데이터 일관성 ===
+    st.markdown("### 🔄 데이터 일관성")
+    
+    status = db.get_migration_status()
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
         if status['null_equipment_name'] > 0:
             st.metric("누락된 장비명", f"{status['null_equipment_name']:,}건", delta="수정 필요", delta_color="inverse")
         else:
             st.metric("누락된 장비명", "0건 ✓")
     
-    with col3:
+    with col2:
         if status['null_sid'] > 0:
             st.metric("누락된 SID", f"{status['null_sid']:,}건", delta="수정 필요", delta_color="inverse")
         else:
             st.metric("누락된 SID", "0건 ✓")
     
-    with col4:
+    with col3:
         if status['mismatched_status'] > 0:
             st.metric("상태 불일치", f"{status['mismatched_status']:,}건", delta="수정 필요", delta_color="inverse")
         else:
             st.metric("상태 불일치", "0건 ✓")
     
-    st.divider()
-    
-    # Migration actions
-    st.subheader("📦 데이터 마이그레이션")
-    
     total_issues = status['null_equipment_name'] + status['null_sid'] + status['mismatched_status']
     
     if total_issues > 0:
-        st.warning(f"⚠️ 총 {total_issues:,}건의 데이터 불일치가 발견되었습니다.")
-        
-        with st.expander("📋 상세 정보", expanded=False):
-            st.markdown(f"""
-**문제 유형:**
-- **장비명 누락**: {status['null_equipment_name']:,}건 - `measurements.equipment_name`이 NULL
-- **SID 누락**: {status['null_sid']:,}건 - `measurements.sid`가 NULL  
-- **상태 불일치**: {status['mismatched_status']:,}건 - 승인된 장비의 측정 데이터가 여전히 'pending' 상태
-
-**해결 방법:**
-아래 "데이터 동기화 실행" 버튼을 클릭하면 `equipments` 테이블의 값을 기준으로 `measurements` 테이블을 업데이트합니다.
-            """)
-        
         if st.button("🔄 데이터 동기화 실행", type="primary", key="run_migration"):
             with st.spinner("데이터 동기화 중..."):
                 result = db.sync_denormalized_columns()
-            
-            st.success(f"""
-✅ 동기화 완료!
-- 장비명 업데이트: {result['equipment_name']:,}건
-- SID 업데이트: {result['sid']:,}건
-- 상태 업데이트: {result['status']:,}건
-            """)
+            st.success(f"✅ 동기화 완료! 장비명: {result['equipment_name']:,}건, SID: {result['sid']:,}건, 상태: {result['status']:,}건")
             st.rerun()
-    else:
-        st.success("✅ 모든 데이터가 일관성 있게 유지되고 있습니다.")
     
     st.divider()
     
-    # SID 없는 장비 조회
-    st.subheader("🔍 SID 미할당 장비 조회")
+    # === 4. 중복 데이터 검출 ===
+    st.markdown("### 🔍 중복 데이터 검출")
+    
+    duplicates = db.find_duplicate_uploads()
+    
+    if not duplicates.empty:
+        st.warning(f"⚠️ {len(duplicates)}건의 중복 업로드가 발견되었습니다.")
+        st.dataframe(duplicates, use_container_width=True, hide_index=True)
+    else:
+        st.success("✅ 중복 데이터가 없습니다.")
+    
+    st.divider()
+    
+    # === 5. SID 미할당 장비 ===
+    st.markdown("### 📋 SID 미할당 장비")
     
     conn = db.get_connection()
     no_sid_equip = pd.read_sql_query("""
@@ -786,6 +824,23 @@ def render_data_maintenance():
         st.info("💡 '전체 데이터 조회' 탭에서 개별 장비의 SID를 수정할 수 있습니다.")
     else:
         st.success("✅ 모든 장비에 SID가 할당되어 있습니다.")
+    
+    st.divider()
+    
+    # === 6. DB 최적화 ===
+    st.markdown("### ⚡ 데이터베이스 최적화")
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.info("VACUUM을 실행하면 삭제된 레코드의 공간을 회수하여 DB 파일 크기를 줄일 수 있습니다.")
+    
+    with col2:
+        if st.button("🧹 VACUUM 실행", key="vacuum_db"):
+            with st.spinner("최적화 중..."):
+                result = db.vacuum_database()
+            st.success(f"✅ 최적화 완료! {result['size_before_mb']} MB → {result['size_after_mb']} MB (절약: {result['space_saved_mb']} MB)")
+            st.rerun()
 
 
 def render_admin_tab():
@@ -916,10 +971,8 @@ def main():
         render_upload_tab(
             extract_func=extract_equipment_info_from_last_sheet,
             insert_func=db.insert_equipment_from_excel,
-            sync_func=sync_data_from_local,
             equipment_options=EQUIPMENT_OPTIONS,
             industrial_models=INDUSTRIAL_MODELS,
-            check_status_func=db.get_equipment_status,
             log_history_func=db.log_approval_history
         )
     
